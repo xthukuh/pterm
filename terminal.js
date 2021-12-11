@@ -293,8 +293,12 @@ const Terminal = (el, opts={}) => {
 	};
 
 	//event handler - keypress
-	const keypressHandler = () => {
-		if (!isInputMode()) caretEnd();
+	const keypressHandler = e => {
+		if (!isInputMode()){
+			e.preventDefault();
+			edit.innerHTML += e.key;
+			caretEnd();
+		}
 	};
 
 	//initialize
