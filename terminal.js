@@ -194,7 +194,7 @@ const Terminal = (el, opts={}) => {
 				let chunk = decoder.decode(result.value || new Uint8Array, {stream: !result.done});
 				
 				//print output
-				let output = chunk.trim();
+				let output = chunk.trimEnd();
 				print(!text.length && output.length ? `\n${output}` : output, 1);
 
 				//text buffer

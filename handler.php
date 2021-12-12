@@ -69,7 +69,6 @@ function whoami($exec_cmd=0){
 	$whoami = 'undefined';
 	if (exec_cmd('whoami', 0, $output, $exit)){
 		$output = is_array($output) && count($output) ? trim(implode("\n", $output)) : 'error';
-		if ($exit) $output .= "[$exit]";
 		$whoami = $output;
 	}
 	return $whoami;
@@ -114,12 +113,9 @@ function exec_cmd(string $cmd, bool $print_enabled=false, array &$output=null, i
 		$output[] = $str;
 	};
 
-	//helper - escape cmd
+	//helper - normalize cmd
 	$_escape_cmd = function($cmd){
 		$cmd = str_replace(urldecode('%C2%A0'), ' ', $cmd);
-		$cmd = escapeshellcmd($cmd);
-		$cmd = str_replace('!', '\!', $cmd);
-		$cmd = preg_replace('/(?<!^) /', '^ ', $cmd);
 		return $cmd;
 	};
 
@@ -161,7 +157,6 @@ function exec_cmd(string $cmd, bool $print_enabled=false, array &$output=null, i
 	@fclose($pipes[1]);
 	@fclose($pipes[2]);
 	if ($code = @proc_close($process)){
-		$_buffer("exit code = $code");
 		$result_code = $code;
 	}
 	set_time_limit($limit);
