@@ -25,4 +25,10 @@ define('PASS_PHRASE', 'alohomora');
 //...
 ```
 
+#
+
+![](screenshot.png)
+
+#
+
 ### 💖 By Thuku. _**Enjoy!**_
