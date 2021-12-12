@@ -12,20 +12,27 @@
 	<link href="./styles.css" rel="stylesheet">
 	<script type="text/javascript">
 		window.HANDLER = 'handler.php';
-		window.CHDIR = '<?php echo $_SESSION['chdir']; ?>';
+		window.WHOAMI = '<?php echo str_replace('\\', '\\\\', $_SESSION['whoami']); ?>';
+		window.CWD = '<?php echo $_SESSION['cwd']; ?>';
 	</script>
 </head>
 <body>
 	<div class="vh-100 flex justify-center">
-		<div class="container flex flex-column w-min-100">
-			<div class="title p-10 border-bottom">
+		<div class="container flex flex-column">
+			<div class="col-light ucase bold p-10 border-bottom">
 				PHP Terminal
 			</div>
-			<div id="terminal" class="flex-grow p-10 pb-20" contenteditable="true" spellcheck="false"></div>
-			<div class="text-light info p-20">
-				<p class="m-0"><strong><span id="chdir"></span></strong></p>
+			<div id="terminal" class="flex-grow p-10 pb-20 bg-black col-white overflow-auto pre-wrap" contenteditable="true" spellcheck="false"></div>
+			<div class="p-20">
+				<p class="m-0">
+					<span id="cwd" class="bold"></span>
+					&nbsp;|&nbsp;
+					<span id="whoami" class="bold"></span>
+					&nbsp;
+					<span class="float-right col-light">Press Escape to abort commands.</span>
+				</p>
 				<p class="m-0 mt-5">
-					<a id="close" href="?close">close</a>
+					<a id="logout" href="#!">logout</a>
 					&nbsp;|&nbsp;
 					<a href="https://github.com/xthukuh" target="_blank">By Thuku</a>
 				</p>

@@ -33,14 +33,25 @@ const Terminal = (el, opts={}) => {
 		busy: false,
 		length: 0,
 		history: 0,
+		controller: null,
 	};
 	const options = Object.assign({}, {
 		prompt: '> ',
+		light: 'text-light',
 		handler: '',
-		chdir: '',
-		chdirEl: null,
-		closeEl: null,
+		logoutEl: null,
+		whoami: '',
+		whoamiEl: null,
+		cwd: '',
+		cwdEl: null,
 	}, opts);
+
+	//set header option
+	const setHeaderOption = (key, str) => {
+		if ('string' === typeof str && str !== options[key]) options[key] = str.trim();
+		if (isElement(options[`${key}El`])) options[`${key}El`].innerHTML = options[key];
+		return options[key];
+	};
 
 	//to html
 	const toHtml = text => text.replace(/\r\n/g, '\n')
@@ -95,20 +106,13 @@ const Terminal = (el, opts={}) => {
 	//print
 	const print = (text, light) => {
 		let html = toHtml(text);
-		if (light) html = `<span class="text-light">${html}</span>`;
+		if (light) html = `<span class="${options.light}">${html}</span>`;
 		buffer.push(html);
 		output();
 	};
 
 	//prompt
 	const prompt = () => print(options.prompt);
-
-	//chdir set
-	const chdir = dir => {
-		if ('string' === typeof dir && dir !== options.chdir) options.chdir = dir.trim();
-		if (isElement(options.chdirEl)) options.chdirEl.innerHTML = options.chdir;
-		return options.chdir;
-	};
 
 	//parse json
 	const parseJSON = (str, _default=null) => {
@@ -120,10 +124,13 @@ const Terminal = (el, opts={}) => {
 		}
 	};
 
+	//abort exec
+	const abort = () => state.controller ? state.controller.abort() : null;
+
 	//exec cmd
 	const exec = async cmd => {
 		busy();
-		print('...', 1);
+		print('\n...', 1);
 		let loading = true;
 
 		//stop loading
@@ -143,13 +150,20 @@ const Terminal = (el, opts={}) => {
 			return params.join('&');
 		};
 
+		//controller
+		const controller = new AbortController();
+		const { signal } = controller;
+		state.controller = controller;
+
 		//fetch request
 		const res = await fetch(options.handler, {
+			signal,
 			method: 'post',
 			headers: {
 				'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
 			},
-			body: requestBody({cmd, chdir: options.chdir}),
+			keepalive: true,
+			body: requestBody({cmd, cwd: options.cwd}),
 		})
 		.then(async res => {
 			
@@ -159,11 +173,15 @@ const Terminal = (el, opts={}) => {
 			//stop loading
 			stopLoading();
 
-			//read response
-			let chdir = res.headers.get('x-chdir');
+			//set header options
+			setHeaderOption('cwd', res.headers.get('x-cwd'));
+			setHeaderOption('whoami', res.headers.get('x-whoami'));
+
+			//output response
 			let text = '';
 			let reader = res.body.getReader();
 			let decoder = new TextDecoder();
+			//let prevOutput = null;
 			return readChunk();
 
 			//read chunk
@@ -174,29 +192,37 @@ const Terminal = (el, opts={}) => {
 			//append chunks
 			function appendChunks(result){
 				let chunk = decoder.decode(result.value || new Uint8Array, {stream: !result.done});
-
-				//print output
-				let output = chunk.replace(/^[\n\r]/g, '').trimEnd();
-				print(!text.length && output.length ? `\n${output}` : output, 1);
 				
+				//print output
+				let output = chunk.trim();
+				print(!text.length && output.length ? `\n${output}` : output, 1);
+
 				//text buffer
 				text += chunk;
-				if (result.done) return {text, chdir};
+				if (result.done) return text;
 				else return readChunk();
 			}
 		})
-		.catch(err => ({error: `Fetch Error: ${err}`}));
+		.catch(error => {
+			
+			//abort
+			if ('object' === typeof error && error && error.name === 'AbortError'){
+				print('');
+				return;
+			}
+			
+			//error result
+			return {error};
+		});
 		
 		//stop loading
 		stopLoading();
+		state.controller = null;
 
-		//handle response
-		if ('object' === typeof res && res){
-			if ('error' in res){
-				print(`\n${res.error}\n`, 1);
-				console.error(res.error);
-			}
-			if ('chdir' in res) chdir(res.chdir);
+		//set response
+		if ('object' === typeof res && res && 'error' in res){
+			print(`${res.error}\n`, 1);
+			console.error(res.error);
 		}
 
 		//done
@@ -204,29 +230,49 @@ const Terminal = (el, opts={}) => {
 		busy(0);
 	};
 
+	//logout
+	const logout = () => {
+		busy();
+		print('\nlogout...', 1);
+		localStorage.removeItem('commands');
+		setTimeout(() => {
+			location.href = '?logout';
+		}, 500);
+	};
+
 	//get input
 	const input = () => {
 		let text = edit.innerText.slice(state.length).replace(/^[\r\n]*|[\r\n]*$/g, '');
 		text = decodeURIComponent(encodeURIComponent(text).replaceAll('%C2%A0', '%20'));
-		return text;
+		return text.trim();
 	};
 
 	//run input cmd
 	const run = () => {
 		let cmd = input();
-
-		//set cmd history
+		if (!cmd) return;
+		
+		//set cmd
+		remove();
+		print(`${options.prompt}${cmd}`);
 		let index = commands.indexOf(cmd);
 		if (index >= 0) commands.splice(index, 1);
 		commands.push(cmd);
 		localStorage.setItem('commands', JSON.stringify(commands));
 		state.history = 0;
 
+		//exit
+		if (cmd === 'exit'){
+			logout();
+			return;
+		}
+
 		//clear
 		if (['cls', 'clear', 'clsx'].includes(cmd)){
 			if (cmd === 'clsx'){
 				commands.splice(0);
 				localStorage.removeItem('commands');
+				console.debug('everything cleared.');
 			}
 			buffer.splice(0);
 			prompt();
@@ -236,7 +282,7 @@ const Terminal = (el, opts={}) => {
 		//cd
 		if (cmd.match(/^cd\s*.*?$/)){
 			let path = cmd.substr(2).trim();
-			chdir(path);
+			setHeaderOption('cwd', path);
 			cmd = 'cd';
 		}
 
@@ -254,9 +300,18 @@ const Terminal = (el, opts={}) => {
 
 	//event handler - keydown
 	const keydownHandler = e => {
-		if (state.busy) return e.preventDefault();
 		const key = e.key.toLowerCase();
 
+		//escape
+		if (key === 'escape'){
+			e.preventDefault();
+			abort();
+			return;
+		}
+		
+		//busy
+		if (state.busy) return e.preventDefault();
+		
 		//enter
 		if (key === 'enter'){
 			e.preventDefault();
@@ -294,33 +349,39 @@ const Terminal = (el, opts={}) => {
 
 	//event handler - keypress
 	const keypressHandler = e => {
-		if (!isInputMode()){
+		if (!isInputMode(-1)){
 			e.preventDefault();
 			edit.innerHTML += e.key;
 			caretEnd();
 		}
 	};
 
-	//initialize
-	let cachedCommands = parseJSON(localStorage.getItem('commands'));
-	if (Array.isArray(cachedCommands)) commands.push(...cachedCommands);
-	if ('string' === typeof options.chdirEl) options.chdirEl = document.querySelector(options.chdirEl);
-	if ('string' === typeof options.closeEl) options.closeEl = document.querySelector(options.closeEl);
-	if (isElement(options.closeEl)) options.closeEl.addEventListener('click', () => {
-		localStorage.removeItem('commands');
-	}, false);
+	//init edit
 	edit.addEventListener('keydown', keydownHandler, false);
 	edit.addEventListener('keypress', keypressHandler, false);
 	setTimeout(() => prompt());
-	chdir();
 
-	//terminal object
-	const terminal = {
-		edit, caret, commands, buffer, state, options,
-		caretEnd, busy, remove, output, history,
-		print, prompt, chdir, exec, input, run, isInputMode
-	};
+	//init commands
+	let cachedCommands = parseJSON(localStorage.getItem('commands'));
+	if (Array.isArray(cachedCommands)) commands.push(...cachedCommands);
+	
+	//init header option - cwd
+	if ('string' === typeof options.cwdEl) options.cwdEl = document.querySelector(options.cwdEl);
+	setHeaderOption('cwd');
+
+	//init header option - whoami
+	if ('string' === typeof options.whoamiEl) options.whoamiEl = document.querySelector(options.whoamiEl);
+	setHeaderOption('whoami');
+
+	//init logout
+	if ('string' === typeof options.logoutEl) options.logoutEl = document.querySelector(options.logoutEl);
+	if (isElement(options.logoutEl)) options.logoutEl.addEventListener('click', logout, false);
 
 	//result
-	return terminal;
+	return {
+		edit, caret, commands, buffer, state, options,
+		caretEnd, busy, remove, output, history,
+		print, prompt, setHeaderOption, exec, logout,
+		input, run, isInputMode
+	};
 };

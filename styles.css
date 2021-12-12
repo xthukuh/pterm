@@ -45,6 +45,10 @@ a:hover {
 	display: flex;
 }
 
+.justify-center {
+	justify-content: center;
+}
+
 .flex-column {
 	flex-direction: column;
 }
@@ -53,12 +57,28 @@ a:hover {
 	flex-grow: 1;
 }
 
-.justify-center {
-	justify-content: center;
+.border-bottom {
+	border-bottom: 1px solid #ddd;
 }
 
-.text-light {
+.ucase {
+	text-transform: uppercase;
+}
+
+.bold {
+	font-weight: bold;
+}
+
+.col-light {
 	color: gray;
+}
+
+.col-white {
+	color:blanchedalmond;
+}
+
+.float-right {
+	float: right;
 }
 
 .p-10 {
@@ -81,21 +101,14 @@ a:hover {
 	margin-top: 5px;
 }
 
-.mt-10 {
-	margin-top: 10px;
-}
-
-.min-h100 {
-	min-height: 100px;
-}
-
-.border-bottom {
-	border-bottom: 1px solid #ddd;
-}
-
-#terminal {
-	overflow: auto;
+.bg-black {
 	background-color: black;
-	color:blanchedalmond;
+}
+
+.overflow-auto {
+	overflow: auto;
+}
+
+.pre-wrap {
 	white-space: pre-wrap;
 }
