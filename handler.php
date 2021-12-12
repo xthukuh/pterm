@@ -133,6 +133,7 @@ function exec_cmd(string $cmd, bool $print_enabled=false, array &$output=null, i
 	//process open failure
 	if (!is_resource($process)){
 		$_buffer("Failed to open process:  $cmd");
+		set_time_limit($limit);
 		return false;
 	}
 
@@ -163,5 +164,6 @@ function exec_cmd(string $cmd, bool $print_enabled=false, array &$output=null, i
 		$_buffer("exit code = $code");
 		$result_code = $code;
 	}
+	set_time_limit($limit);
 	return true;
 }
