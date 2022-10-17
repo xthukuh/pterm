@@ -50,12 +50,16 @@ class Process
 	/**
 	 * verbose log mode (0=disabled, 1=all, 2=normal/high/error, 3=high/error, 4=error)
 	 * 
+	 * - TODO: for debugging: omit in final version 
+	 * 
 	 * @var int
 	 */
 	public static $VERBOSE = 0;
 
 	/**
 	 * verbose log file path
+	 * 
+	 * - TODO: for debugging: omit in final version 
 	 * 
 	 * @var string
 	 */
@@ -133,6 +137,8 @@ class Process
 
 	/**
 	 * verbose log
+	 * 
+	 * - TODO: for debugging: omit in final version 
 	 * 
 	 * @param  string	$message	- log message
 	 * @param  int		$level		- log level (0=low, 1=normal, 2=high, 3=error)
@@ -804,7 +810,13 @@ class Process
 		else $cmd = sprintf('ps afx --ppid %s', $pid);
 
 		//run command
-		if (($out = static::run($cmd, $err, $exit)) === false){
+		$out = null;
+		$err = null;
+		$exit = null;
+		static::_no_verbose(function() use (&$out, &$cmd, &$err, &$exit){
+			$out = static::run($cmd, $err, $exit);
+		});
+		if ($out === false){
 			$error = "Pid [$pid] process child exec failure (exit=$exit): $err";
 			return false;
 		}
@@ -826,22 +838,25 @@ class Process
 				return is_numeric($val) && trim((int) $val) === trim($val);
 			});
 			$parsed = empty($parsed) ? [] : array_values($parsed);
-			if (!empty($parsed) && in_array($pid, $parsed)){
-				$seen = 0;
-				$pids = array_filter($parsed, function($val) use (&$pid, &$seen){
-					if ($val === $pid){
-						$seen = 1;
-						return false;
-					}
-					return $seen;
-				});
+			if (!empty($parsed)){
+			    if (in_array($pid, $parsed)){
+			       $seen = 0;
+			       $pids = array_filter($parsed, function($val) use (&$pid, &$seen){
+    					if ($val === $pid){
+    						$seen = 1;
+    						return false;
+    					}
+					    return $seen;
+				    });
+			    }
+				else $pids = $parsed;
 				$pids = empty($pids) ? [] : array_values($pids);
 			}
 		}
 
 		//result
 		$result = ($len = count($pids)) ? $pids[$len - 1] : false;
-		if (self::$VERBOSE) static::_verbose(sprintf('> static::child(pid=%s, pids=%s) -> (result=%s, parsed=%s, exit=%s)', $pid, json_encode($pids), json_encode($result), json_encode($parsed), $exit), 1);
+		if (self::$VERBOSE) static::_verbose(sprintf('> static::child(pid=%s, pids=%s) -> (result=%s, parsed=%s, exit=%s) %s', $pid, json_encode($pids), json_encode($result), json_encode($parsed), $exit, "\ncmd=$cmd\nout=$out"), 1);
 		if (!$result) $error = "Pid [$pid] process child not found.";
 		return $result;
 	}
@@ -864,14 +879,20 @@ class Process
 		else $cmd = sprintf('ps -p %d -opid=,cmd= 2>&1', $pid);
 
 		//run command
-		if (($out = static::run($cmd, $err, $exit)) === false){
+		$out = null;
+		$err = null;
+		$exit = null;
+		static::_no_verbose(function() use (&$out, &$cmd, &$err, &$exit){
+			$out = static::run($cmd, $err, $exit);
+		});
+		if ($out === false){
 			$error = "Pid [$pid] process exists exec failure (exit=$exit): $err";
 			return false;
 		}
 
 		//result
 		$result = ($out = trim($out)) && strpos($out, "$pid") !== false ? $pid : 0;
-		if (self::$VERBOSE) static::_verbose(sprintf('> static::exists(pid=%s) -> (result=%s, exit=%s)', $pid, json_encode($result), $exit), 1);
+		if (self::$VERBOSE) static::_verbose(sprintf('> static::exists(pid=%s) -> (result=%s, exit=%s) %s', $pid, json_encode($result), $exit, "\nout=" . $out), 1);
 		return $result;
 	}
 
@@ -893,7 +914,13 @@ class Process
 		else $cmd = sprintf('kill -s 9 %s 2>&1', $pid);
 
 		//run command
-		if (($out = static::run($cmd, $err, $exit)) === false){
+		$out = null;
+		$err = null;
+		$exit = null;
+		static::_no_verbose(function() use (&$out, &$cmd, &$err, &$exit){
+			$out = static::run($cmd, $err, $exit);
+		});
+		if ($out === false){
 			$error = "Pid [$pid] process kill exec failure (exit=$exit): $err";
 			return false;
 		}
@@ -994,6 +1021,7 @@ class Process
 			if (!$includeArgs) $cached_exe = $exe;
 			return $exe;
 		};
+		if (!static::is_win() && is_executable($php = '/usr/local/bin/php')) return $_phpExe($php);
 		$ds = DIRECTORY_SEPARATOR;
 		if ($php = getenv('PHP_BINARY')){
 			if (!is_executable($php)){
