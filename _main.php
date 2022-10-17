@@ -21,7 +21,6 @@ $options = [
 	'resume' => null,
 	'page' => $method === 'get' ? 1 : 0,
 	'args' => isset($argv) ? $argv : null,
-	'__args__' => $GLOBALS['__args__'],
 	'is_console' => Process::is_console(),
 ];
 if (isset($argv) && is_array($argv) && ($len = count($argv))){
