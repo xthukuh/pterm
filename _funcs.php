@@ -162,9 +162,10 @@ function _kill_pid($pid){
 }
 
 //buffer running
+//FIX: refactor
 function _buffer_running($data=null){
-	$resume = !!($data = _cache_data($data));
-	if (!$resume && !($data = _cache_get(1))) return;
+	$is_cache = !!($data = _cache_data($data));
+	if (!$is_cache && !($data = _cache_get())) return;
 
 	//opened/resumed process
 	$cmd = $data['cmd'];
@@ -173,16 +174,17 @@ function _buffer_running($data=null){
 		$cmd = sprintf('[%s] %s - (%s)', $pid, $cmd, $data['child_cmd']);
 		$pid = $data['child_pid'];
 	}
-	if (!$resume) _echo("[resume: $pid]> $cmd");
+	if (!$is_cache) _echo("[resume: $pid]> $cmd");
 
 	//output buffer
 	$_restore = Process::no_limit();
 	try {
 		$abort = 0;
-		if (is_file($path = _option('log_file'))){	
+		if (is_file($path = _option('log_file'))){
 			$res = Process::read_file($path, $pid, $_seek=0, $_print=true, $_callback=null, $error, $abort);
 			if ($abort) _echo("Buffer abort: $abort");
 			if ($res === false) throw new Exception("Buffer Error: $error");
+			else _cache_get(1);
 		}
 		else {
 			_echo("[$pid]> process output log file not found - polling...");
@@ -207,6 +209,7 @@ function _buffer_running($data=null){
 }
 
 //command line
+//FIX: refactor
 function _command($cmd, $stdout=0){
 	static $php;
 	
@@ -237,7 +240,7 @@ function _command($cmd, $stdout=0){
 	}
 	elseif (stripos($cmd, 'php') === 0) $cmd = preg_replace('/^php\s+/i', "$php ", $cmd);
 	elseif (stripos($cmd, 'composer') === 0){
-		if (strtolower($cmd) === 'composer') $cmd = "$php composer";
+	    if (strtolower($cmd) === 'composer') $cmd = "$php composer";
 		else $cmd = preg_replace('/^composer\s+/i', "$php composer ", $cmd);
 	}
 
@@ -250,10 +253,32 @@ function _command($cmd, $stdout=0){
 }
 
 //run background process
+//FIX: refactor
 function _run($cmd, $cached=0){
 	$pid_file = $cached ? _option('pid_file') : null;
+	/*
+	$proc = new Process($cmd, ['cwd' => _option('cwd')], 1);
+	if (!$proc -> open(function($p){
+	    $p -> close_pipe(0);
+	})) return _failure("Run Error: " . $proc -> error);
+	if (!($pid = Process::pid($proc -> pid, $err))){
+	    $proc -> close(1);
+	    return _failure("Run PID Error: $err");
+	}
+	$GLOBALS['__proc__'] = $proc;
+	if ($pid_file) _write($pid_file, "$pid");
+	sleep(1);
+	//*/
+	/*
 	$pid = Process::run_bg($cmd, $error, ['cwd' => _option('cwd')], $cb=null, $pid_file);
 	if (!$pid) return _failure("Run Error: $error");
+	//*/
+	putenv('COMPOSER_HOME=' . _option('cwd') . '/vendor/bin/composer');
+	$cmd .= ' & echo $!';
+	$out = shell_exec($cmd);
+	if (!($pid = Process::pid((int) trim($out), $err))) return _failure("Shell exec failed: $err ($cmd)");
+	$res = Process::exists($pid);
+	//DEBUG: _echo("[$pid] started...");
 	return [
 		'cmd' => $cmd,
 		'pid' => $pid
@@ -267,12 +292,14 @@ function _run_resume(){
 }
 
 //run cached process
+//FIX: refactor
 function _run_cached($cmd){
 	_run_resume();
 	$cmd = _command($cmd, 1);
-	_echo(">> $cmd");
+	//DEBUG: _echo(">> $cmd");
 	$data = _run($cmd, 1);
-	$res = _buffer_running(_cache_set($data));
+	$data = _cache_set($data);
+	$res = _buffer_running($data);
 	if ($res !== false) _run(_command('php self clear')); //auto cleanup
 	return $res;
 }
@@ -306,6 +333,7 @@ function _worker_set($data){
 }
 
 //worker
+//FIX: refactor
 function _worker($cmd, $handler){
 	if (!is_callable($handler)) return _failure('Worker handler is not callable.');
 	_run_resume();
@@ -314,7 +342,7 @@ function _worker($cmd, $handler){
 	$_restore = Process::no_limit();
 	$_done = function() use (&$_restore, &$cmd){
 		$_restore();
-		_cleanup(2);
+		//_cleanup(2);
 		_option('worker', null);
 		_echo(">>> $cmd done.");
 	};
@@ -329,6 +357,7 @@ function _worker($cmd, $handler){
 }
 
 //worker install composer
+//FIX: refactor
 function _worker_install_composer(){
 	_worker('install-composer', function(){
 		$ts = microtime(1);
@@ -370,7 +399,13 @@ function _worker_install_composer(){
 		_echo("\nSetup composer...");
 		_delete($phar_file);
 		$cmd = _command('php composer-setup.php', 2);
-		_echo(">> $cmd");
+		/*
+		_echo("exec>> $cmd");
+		$res = exec($cmd . ' & echo $!', $output, $exit);
+		_echo(['output' => $output, 'exit' => $exit]);
+		if ($res === false) return _failure('Exec failed.');
+		*/
+		///*
 		$data = _run($cmd, 1);
 		$res = _buffer_running(_worker_set([
 			'expires' => time() + 5,
@@ -382,11 +417,12 @@ function _worker_install_composer(){
 			_kill_pid($data['pid']);
 			return _failure("Setup composer interrupted. ($eta sec)");
 		}
+		//*/
 		_echo("Setup done. ($eta sec)");
 
 		//finalizing
 		_worker_set([
-			'expires' => time() + 2,
+			'expires' => 0,
 			'child_cmd' => null,
 			'child_pid' => null,
 		]);
