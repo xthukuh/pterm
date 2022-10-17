@@ -1,0 +1,12 @@
+.vscode
+.idea
+Thumbs.db
+/vendor
+*.xx
+*.xx*
+*.log
+*.zip
+composer
+composer.sig
+composer.phar
+composer-setup.php

@@ -1,46 +1,64 @@
-<?php require_once __DIR__ . '/handler.php'; ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="utf-8">
-	<meta http-equiv="X-UA-Compatible" content="IE=edge">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>PHP Terminal</title>
-	<link rel="preconnect" href="https://fonts.googleapis.com">
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Courier+Prime&display=swap" rel="stylesheet">
-	<link href="./styles.css" rel="stylesheet">
-	<script type="text/javascript">
-		window.HANDLER = 'handler.php';
-		window.WHOAMI = '<?php echo str_replace('\\', '\\\\', $_SESSION['whoami']); ?>';
-		window.CWD = '<?php echo $_SESSION['cwd']; ?>';
-	</script>
-</head>
-<body>
-	<div class="vh-100 flex justify-center">
-		<div class="container flex flex-column">
-			<div class="col-light ucase bold p-10 border-bottom">
-				PHP Terminal
-			</div>
-			<div id="terminal" class="flex-grow p-10 pb-20 bg-black col-white overflow-auto pre-wrap" contenteditable="true" spellcheck="false"></div>
-			<div class="p-20">
-				<p class="m-0">
-					<span id="cwd" class="bold"></span>
-					&nbsp;|&nbsp;
-					<span id="whoami" class="bold"></span>
-					&nbsp;
-					<span class="float-right col-light">Press Escape to abort commands.</span>
-				</p>
-				<p class="m-0 mt-5">
-					<a id="logout" href="#!">logout</a>
-					&nbsp;|&nbsp;
-					<a href="https://github.com/xthukuh" target="_blank">By Thuku</a>
-				</p>
-			</div>
-		</div>
-	</div>
-	<script type="text/javascript" src="caret.js"></script>
-	<script type="text/javascript" src="terminal.js"></script>
-	<script type="text/javascript" src="script.js"></script>
-</body>
-</html>
+<?php
+$_process = __DIR__ . '/Process.php';
+$_funcs = __DIR__ . '/_funcs.php';
+$_main = __DIR__ . '/_main.php';
+$_html = __DIR__ . '/_html.php';
+
+//handle combine (default name: __ins.php)
+$combined = null;
+if ((isset($argv) && is_array($argv) && isset($argv[1]) && trim($argv[1]) === 'combine')){
+	$combined = 1;
+	if (isset($argv[2]) && ($tmp = trim($argv[2]))) $combined = $tmp;
+}
+elseif (isset($_GET) && is_array($_GET) && array_key_exists('combine', $_GET)){
+	$combined = 1;
+	if ($tmp = trim($_GET['combine'])) $combined = $tmp;
+}
+if ($combined){
+	if (is_string($combined)){
+		if (!preg_match('/\.php$/i', $combined)) $combined .= '.php';
+	}
+	else $combined = '__ins.php';
+	$file = getcwd() . '/' . $combined;
+	@unlink($file);
+	$_append = function($data) use (&$file){
+		$fw = fopen($file, 'a');
+		fwrite($fw, $data);
+		fclose($fw);
+	};
+	$_read_write = function($path, $is_php=0) use (&$_append){
+		$replaced = 0;
+		$fr = fopen($path, 'rb');
+		while (!feof($fr)){
+			$buffer = fread($fr, 4096 * 2);
+			if (strlen($buffer)){
+				if (!$replaced && $is_php){
+					if (strpos($buffer, '<?php') !== false){
+						$buffer = trim(str_replace('<?php', '', $buffer));
+						$replaced = 1;
+					}
+				}
+				$_append($buffer);
+			}
+		}
+		fclose($fr);
+	};
+	$_append("<?php");
+	$_append("\n\n\$GLOBALS['__TARGET__'] = __FILE__;");
+	$_append("\n\n#================================  Process  =================================\n\n");
+	$_read_write($_process, 1);
+	$_append("\n\n#================================  _funcs   =================================\n\n");
+	$_read_write($_funcs, 1);
+	$_append("\n\n#================================  _main    =================================\n\n");
+	$_read_write($_main, 1);
+	$_append("\n\n#================================  _html    =================================\n?>\n\n");
+	$_read_write($_html);
+	exit;
+}
+
+//imports
+$GLOBALS['__TARGET__'] = __FILE__;
+require_once $_process;
+require_once $_funcs;
+require_once $_main;
+require_once $_html;

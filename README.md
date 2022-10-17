@@ -1,34 +1,13 @@
-# php-terminal
-
-## A simple HTML/JavaScript/PHP terminal emulator.
+## **php-terminal**
 
 #
 
-The file **handler.php** processes requests.
+A PHP/HTML/JS terminal emulator.
 
-To authenticate, enter pass phrase in url _auth_ query:
+**Runs on any PHP server and accessed from any web browser.**
 
-```?auth=[PASS_PHRASE]```
+	This provides a simple html interface where you can execute php, composer, and other commands directly from the browser. The commands are executed on a separate resumable cached process thread with output logs.
 
-For example:
+*This is especially useful when no terminal access is available like in the case of shared/limited user apache server.*
 
-```http://localhost/php-terminal?auth=alohomora```
-
-To change the pass phrase, edit **handler.php** file.
-
-```php
-<?php
-
-//auth pass phrase - edit to change
-define('PASS_PHRASE', 'alohomora');
-
-//...
-```
-
-#
-
-![](screenshot.png)
-
-#
-
-### 💖 By Thuku. _**Enjoy!**_
+**By [@xthukuh](https://github.com/xthukuh)**
