@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -109,11 +110,11 @@
 		const output_prompt = '>_';
 		const outputClear = text => output.innerText = output_prompt;
 		const outputText = text => {
-			output.innerText = output.innerText.replace(new RegExp(`${output_prompt}\s*$`, 'g'), '') + String(text);
+			output.innerText = output.innerText.replace(new RegExp(`\n?${output_prompt}\s*$`, 'g'), '') + String(text);
 			outputScrollBottom();
 		};
 		const outputPrompt = () => {
-			output.innerText = output.innerText.trim() + '\n' + output_prompt;
+			output.innerText = output.innerText.trim() + '\n\n' + output_prompt;
 			outputScrollBottom();
 		};
 		const outputCmd = cmd => outputText((output.innerText.indexOf('\n') > -1 ? '\n' : '') + '> ' + cmd + '\n');
