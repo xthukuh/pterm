@@ -1,5 +1,16 @@
 <?php
 
+/**
+ * Process Wrapper
+ * 
+ * - By @xthukuh [https://github.com/xthukuh]
+ * - run commands with (proc_open/shell_exec)
+ * - read file/pipe resource output buffer with callback
+ * - get error messages on failures
+ * - run background process and get child PID
+ * - check if PID exists/kill PID process
+ */
+
 class Process
 {
 	/**
@@ -17,10 +28,10 @@ class Process
 	 * @var array
 	 */
 	const OPTIONS = [
-		'descriptor_spec' => null,	//(array) file descriptors [default: self::DESCRIPTOR_SPEC]
-		'cwd' => null,				//working directory [default: getcwd()]
-		'env_vars' => null,			//(assoc array) environment variables
-		'other_options' => null,	//(assoc array) other options [default (windows): self::WIN_OPTIONS]
+		'descriptor_spec' => null,	//(array) file descriptors [default: []/self::DESCRIPTOR_SPEC]
+		'cwd' => null,				//(string) working directory [default: null/getcwd()]
+		'env_vars' => null,			//(assoc array) environment variables [default: null] (i.e. getenv() ~ putenv('KEY=VALUE') to set custom)
+		'other_options' => null,	//(assoc array) other options [default: null] (i.e. for windows ~ self::WIN_OPTIONS)
 	];
 
 	/**
@@ -63,7 +74,7 @@ class Process
 	 * 
 	 * @var string
 	 */
-	public static $LOG_FILE = '__process_verbose.log';
+	public static $LOG_FILE = '__verbose.log';
 
 	/**
 	 * process error message (if failed)
@@ -146,16 +157,18 @@ class Process
 	 */
 	private static function _verbose($message, $level=0){
 		static $path;
-		if (!$path) $path = is_string($tmp = self::$LOG_FILE) && ($tmp = trim($tmp)) ? $tmp : '__process_verbose.log';
 		if (($verbose = (int) self::$VERBOSE) <= 0) return;
 		if ($level < ($verbose - 1)) return;
 		$datetime = (new DateTime()) -> format('Y-m-d H:i:s');
 		$data = rtrim("[$datetime - $level] $message") . "\n";
+		if (!$path) $path = is_string($tmp = self::$LOG_FILE) && ($tmp = trim($tmp)) ? $tmp : '__verbose.log';
 		if (!@file_put_contents($path, $data, FILE_APPEND)) throw new Exception("Failed to append contents ($path)");
 	}
 
 	/**
 	 * disable verbose for callback
+	 * 
+	 * - TODO: for debugging: omit in final version 
 	 * 
 	 * @param  callable	$handler	- callback method
 	 * @return void
@@ -264,7 +277,7 @@ class Process
 	 * @return void
 	 */
 	public function shutdown(){
-		if (strpos($state = $this -> _state, 'open') === false) return;
+		if ($this -> _state !== 'open') return; //ignore not open
 		if (self::$VERBOSE) static::_verbose(sprintf('> $this -> shutdown() - (state: %s)', $state), 1);
 		$this -> _state = 'shutdown';
 		$this -> close(1);
@@ -285,22 +298,16 @@ class Process
 		if (array_key_exists($key = 'running', $status)) $running = (int) (!!$status[$key]);
 		return $status;
 	}
-
+	//FIX: refactor: $open_callback, $get_child
 	/**
-	 * open process (proc_open)
+	 * open process (proc_open/shell_exec (unix/linux))
 	 * 
-	 * ~ callback results
-	 * - if callback returns true:	prevents running process close (you will need to call $self -> close() manually [automatically closed by shutdown handler])
-	 * - if callback returns false:	kill/close running process
-	 * 
-	 * @param  callable	$open_callback	- process opened callback (i.e function(Process $self){...})
-	 * @param  bool		$get_child		- sets PIDs ($self -> pids) if enabled - always enabled if $background is enabled.
-	 * @return null|bool				- null if cancelled (ignored) | true on success | false on error
+	 * @param  bool	$child_pid	- get child PIDs (always enabled for $background=true).
+	 * @return null|bool		- null if cancelled (ignored) | true on success | false on error
 	 */
-	public function open($open_callback=null, $get_child=false){
-		$open_callback = is_callable($open_callback) ? $open_callback : null;
-		$get_child = !!$get_child;
-
+	public function open($child_pid=false){
+		$child_pid = !!$child_pid;
+		
 		//check config
 		if (!($config = $this -> _config)) return $this -> _failure(trim('Open process config is undefined. ' . $this -> _error));
 		if (($background = $config['background']) && !$get_child) $get_child = 'BG';
