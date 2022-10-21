@@ -8,7 +8,7 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title><?php echo _option('title'); ?></title>
 	<script type="text/javascript">
-		window.CONFIG = <?php echo json_encode(['resume' => _option('resume')]); ?>;
+		window.CONFIG = <?php echo json_encode(['resume' => _option('resume'), 'cwd' => _option('cwd'), 'target' => _option('target')]); ?>;
 	</script>
 	<style>
 		.container {
@@ -39,7 +39,7 @@
 		}
 		.btn {
 			padding: 4px 8px;
-			min-width: 100px;
+			font-size: 11px;
 		}
 	</style>
 </head>
@@ -68,14 +68,10 @@
 						<label for="input_cmd" class="label" title="Type command here">CMD:</label>
 						<input id="input_cmd" class="input" style="color:blue;" type="text" value="" />
 					</div>
-					<div style="display:flex;flex-direction:row;align-items:center;">
-						<label for="input_cwd" class="label" title="Working directory">CWD:</label>
-						<input id="input_cwd" class="input" type="text" readonly="readonly" value="<?php echo _option('cwd'); ?>" />
-					</div>
 				</div>
 
 				<!-- buttons -->
-				<div style="padding:10px;gap:10px;display:flex;flex-direction:row;flex-wrap:wrap;border-top:1px solid #ddd;justify-content:start;">
+				<div style="padding:10px 10px 20px;gap:10px;display:flex;flex-direction:row;flex-wrap:wrap;border-top:1px solid #ddd;justify-content:start;">
 					<button id="btn_requirements" class="btn" type="button" title="Test Requirements">Test Requirements</button>
 					<button id="btn_install_composer" class="btn" type="button" title="Install Composer">Install Composer</button>
 					<button id="btn_clear" class="btn" type="button" title="Clear Output">Clear</button>
@@ -88,7 +84,10 @@
 		</div>
 	</div>
 	<script type="text/javascript">
-		let IS_CANCELLED, IS_DISABLED, ENDPOINT = window.location.href, RESUME = window.CONFIG?.resume;
+		
+		//config
+		let IS_CANCELLED, IS_DISABLED, ENDPOINT = window.location.href, CONFIG = window.CONFIG || {};
+		console.table(CONFIG);
 		
 		//output wrapper - scroll
 		const output_wrapper = document.getElementById('output_wrapper');
@@ -351,10 +350,7 @@
 		setDisabled(false);
 
 		//resume
-		if (RESUME){
-			console.debug('RESUME', RESUME);
-			ACTIONS.resume();
-		}
+		if (CONFIG.resume) ACTIONS.resume();
 	</script>
 </body>
 </html>

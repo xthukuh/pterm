@@ -84,7 +84,6 @@ function _repo_download($options, &$error=null){
 		if ($n = curl_errno($ch)) throw new Exception('Curl Error [' . $n . ']: ' . curl_error($ch));
 		$http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 		if ($http_code === 200 && $_size_now) $_progress();
-		_print("- http_code: $http_code\n"); //DEBUG:
 		
 		//result
 		$_done();

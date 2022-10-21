@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Process Wrapper
+ * Process Wrapper (dev - with verbose)
  * 
  * - By @xthukuh [https://github.com/xthukuh]
  * - run commands with (proc_open/shell_exec)
@@ -58,6 +58,24 @@ class Process
 		'create_process_group' => false,	//allow the child process to handle CTRL events when set to true
 		'create_new_console' => false,		//the new process has a new console, instead of inheriting its parent's console
 	];
+	
+	/**
+	 * verbose log mode (0=disabled, 1=all, 2=normal/high/error, 3=high/error, 4=error)
+	 * 
+	 * - TODO: for debugging: omit in final version 
+	 * 
+	 * @var int
+	 */
+	public static $VERBOSE = 0;
+
+	/**
+	 * verbose log file path
+	 * 
+	 * - TODO: for debugging: omit in final version 
+	 * 
+	 * @var string
+	 */
+	public static $LOG_FILE = '__verbose.log';
 
 	/**
 	 * process error message (if failed)
@@ -130,14 +148,56 @@ class Process
 	}
 
 	/**
+	 * verbose log
+	 * 
+	 * - TODO: for debugging: omit in final version 
+	 * 
+	 * @param  string	$message	- log message
+	 * @param  int		$level		- log level (0=low, 1=normal, 2=high, 3=error)
+	 * @return void
+	 */
+	private static function _verbose($message, $level=0){
+		static $path;
+		if (($verbose = (int) self::$VERBOSE) <= 0) return;
+		if ($level < ($verbose - 1)) return;
+		$datetime = (new DateTime()) -> format('Y-m-d H:i:s');
+		$data = rtrim("[$datetime - $level] $message") . "\n";
+		if (!$path) $path = is_string($tmp = self::$LOG_FILE) && ($tmp = trim($tmp)) ? $tmp : '__verbose.log';
+		if (!@file_put_contents($path, $data, FILE_APPEND)) throw new Exception("Failed to append contents ($path)");
+	}
+
+	/**
+	 * disable verbose for callback
+	 * 
+	 * - TODO: for debugging: omit in final version 
+	 * 
+	 * @param  callable	$handler	- callback method
+	 * @return void
+	 */
+	private static function _no_verbose($handler){
+		if (!is_callable($handler)) return;
+		$tmp = self::$VERBOSE;
+		self::$VERBOSE = 0;
+		try {
+			call_user_func($handler);
+			self::$VERBOSE = $tmp;
+		}
+		catch (Exception $e){
+			self::$VERBOSE = $tmp;
+			throw $e;
+		}
+	}
+
+	/**
 	 * process fail handler (close running)
 	 * 
 	 * @param  $error  - error message
 	 * @return false
 	 */
 	private function _failure($error){
+		if (self::$VERBOSE) static::_verbose("> FAILURE: $error", 3);
 		$this -> _status = 'failing';
-		$this -> close(1);
+		$this -> close($_kill=1);
 		$this -> _error = $error;
 		$this -> _status = 'failed';
 		return false;
@@ -170,21 +230,33 @@ class Process
 		//closing
 		if (strpos($state = $this -> _state, 'open') !== false) $this -> _state = $state = 'closing';
 		elseif (strpos($state, 'clos') !== false) return; //cancel - already closing/closed
+		if (self::$VERBOSE) static::_verbose(sprintf('> $this -> close($kill=%s)', json_encode($kill)), 1);
 		
 		//kill running
 		if ($kill){
-			$last = null;
-			while ($pid = $this -> running()){
-				static::kill($pid);
-				if ($pid === $last) break;
-				$last = $pid;
-			}
+			$tmp = self::$VERBOSE;
+			static::_no_verbose(function() use (&$tmp){
+				$last = null;
+				while ($pid = $this -> running()){
+					$killed = static::kill($pid);
+					if ($pid === $last) break;
+					$last = $pid;
+					if ($tmp){
+						self::$VERBOSE = $tmp;
+						static::_verbose(sprintf('- closing -> kill(pid=%s) = %s', $pid, json_encode($killed)));
+						self::$VERBOSE = 0;
+					}
+				}
+			});
 		}
 
 		//close pipes
 		if (is_array($this -> _pipes)){
 			foreach ($this -> _pipes as $i => &$pipe){
-				if (is_resource($pipe)) fclose($pipe);
+				if (is_resource($pipe)){
+					$res = fclose($pipe);
+					if (self::$VERBOSE) static::_verbose(sprintf('- fclose($this -> _pipes[%s]) -> %s', $i, json_encode($res)));
+				}
 			}
 			$this -> _pipes = null;
 		}
@@ -193,6 +265,7 @@ class Process
 		if (is_resource($this -> _process)){
 			$this -> _exit = $exit = proc_close($this -> _process);
 			$this -> _process = null;
+			if (self::$VERBOSE) static::_verbose(sprintf('- proc_close($this -> _process) -> %s', json_encode($exit)));
 		}
 
 		//closed state
@@ -206,6 +279,7 @@ class Process
 	 */
 	public function shutdown(){
 		if ($this -> _state !== 'open') return; //cancel - not open
+		if (self::$VERBOSE) static::_verbose(sprintf('> $this -> shutdown() - (state: %s)', $state), 1);
 		$this -> _state = 'shutdown';
 		$this -> close(1);
 	}
@@ -237,6 +311,7 @@ class Process
 		
 		//check config
 		if (!($config = $this -> _config)) return $this -> _failure(trim('Open process config is undefined. ' . $this -> _error));
+		if (self::$VERBOSE) static::_verbose(sprintf('process open config: %s', trim(print_r($config, 1))));
 		if (($background = $config['background']) && !$child_pid) $child_pid = 1;
 		
 		//opening
@@ -257,16 +332,20 @@ class Process
 		
 		//shell_exec - background process linux/unix
 		if ($background && !$as_win){
+			if (self::$VERBOSE) static::_verbose("shell_exec: $command\n", 1);
 			if ($pid = static::pid($out = shell_exec($command))){
 				$this -> _state = 'open';
 				$this -> _exit = 0;
 				$this -> _pid = $pid;
 				$this -> _pids = [$pid];
+				if (self::$VERBOSE) static::_verbose(sprintf('process open (mypid=%s, pid=%s, pids=%s)', getmypid(), $this -> _pid, json_encode($this -> _pids)), 1);
 				return true;
 			}
+			if (self::$VERBOSE) static::_verbose("shell_exec failure try proc_open. out=$out\n", 3);
 		}
 		
 		//proc_open - default
+		if (self::$VERBOSE) static::_verbose("proc_open: $command\n", 1);
 		$this -> _process = proc_open(
 			$command,
 			$config['descriptor_spec'],
@@ -275,12 +354,17 @@ class Process
 			$config['env_vars'],
 			$config['other_options'],
 		);
-		if (!is_resource($this -> _process)) return $this -> _failure(sprintf('proc_open failure. (%s)', $command));
+		if (!is_resource($this -> _process)){
+			if (self::$VERBOSE) static::_verbose("proc_open failure - error_get_last:\n" . print_r(error_get_last(), 3));
+			return $this -> _failure(sprintf('proc_open failure. (%s)', $command));
+		}
 		if (!(!empty($this -> status($pid, $running)) && $pid)) return $this -> _failure(sprintf('Process status/pid failure. (%s)', $command));
+		if (self::$VERBOSE) static::_verbose(sprintf('process opened (mypid=%s, pid=%s, running=%s, child_pid=%s)', getmypid(), $pid, $running, $child_pid));
 		$this -> _pid = $pid;
 		$this -> _pids = [$pid];
 		if ($child_pid && !$this -> get_child($_, $err)) $this -> _failure(sprintf('Process [%s] child PID failure: %s (%s)', $pid, $err, $command));
 		$this -> _state = 'open';
+		if (self::$VERBOSE) static::_verbose(sprintf('process open (mypid=%s, pid=%s, pids=%s)', getmypid(), $this -> _pid, json_encode($this -> _pids)), 1);
 		return true;
 	}
 
@@ -315,20 +399,23 @@ class Process
 	 */
 	public function running(){
 		$running_pid = null;
-		$pid = null;
-		if (is_resource($this -> _process)){
-			$this -> status($pid, $running);
-			if ($running) $running_pid = $pid;
-		}
-		if (!$running_pid && is_array($pids = $this -> _pids) && count($pids)){
-			foreach ($pids as $_pid){
-				if ($_pid === $pid) continue;
-				if (static::exists($_pid)){
-					$running_pid = $_pid;
-					break;
+		static::_no_verbose(function() use (&$running_pid){
+			$pid = null;
+			if (is_resource($this -> _process)){
+				$this -> status($pid, $running);
+				if ($running) $running_pid = $pid;
+			}
+			if (!$running_pid && is_array($pids = $this -> _pids) && count($pids)){
+				foreach ($pids as $_pid){
+					if ($_pid === $pid) continue;
+					if (static::exists($_pid)){
+						$running_pid = $_pid;
+						break;
+					}
 				}
 			}
-		}
+		});
+		if (self::$VERBOSE) static::_verbose(sprintf('> $this -> running() = %s', json_encode($running_pid)), 1);
 		return $running_pid;
 	}
 
@@ -380,7 +467,10 @@ class Process
 	 */
 	public static function is_win(&$uname=null){
 		static $_is_win, $_uname;
-		if (!is_bool($_is_win)) $_is_win = stripos($_uname = php_uname('s'), 'win') > -1;
+		if (!is_bool($_is_win)){
+			$_is_win = stripos($_uname = php_uname('s'), 'win') > -1;
+			if (self::$VERBOSE) static::_verbose(sprintf('> static::is_win(uname=%s) = %s', $_uname, json_encode($_is_win)));
+		}
 		$uname = $_uname;
 		return $_is_win;
 	}
@@ -392,7 +482,10 @@ class Process
 	 */
 	public static function is_console(){
 		static $value;
-		if (!is_integer($value)) $value = in_array(strtolower(php_sapi_name()), ['cli', 'phpdbg']) ? (defined('STDIN') && stream_isatty(STDIN) ? 2 : 1) : 0;
+		if (!is_integer($value)){
+			$value = in_array(strtolower(php_sapi_name()), ['cli', 'phpdbg']) ? (defined('STDIN') && stream_isatty(STDIN) ? 2 : 1) : 0;
+			if (self::$VERBOSE) static::_verbose(sprintf('> static::is_console() = %s', $value));
+		}
 		return $value;
 	}
 
@@ -739,8 +832,15 @@ class Process
 		else $cmd = sprintf('ps afx --ppid %s', $pid);
 
 		//run command
-		if (($out = static::run($cmd, $err)) === false){
-			$error = "Pid [$pid] process child exec failure: $err";
+		$out = null;
+		$err = null;
+		$exit = null;
+		static::_no_verbose(function() use (&$out, &$cmd, &$err, &$exit){
+			$out = static::run($cmd, $err, $proc);
+			$exit = $proc -> exit;
+		});
+		if ($out === false){
+			$error = "Pid [$pid] process child exec failure (exit=$exit): $err";
 			return false;
 		}
 
@@ -779,6 +879,7 @@ class Process
 
 		//result
 		$result = ($len = count($pids)) ? $pids[$len - 1] : false;
+		if (self::$VERBOSE) static::_verbose(sprintf('> static::child(pid=%s, pids=%s) -> (result=%s, parsed=%s, exit=%s) %s', $pid, json_encode($pids), json_encode($result), json_encode($parsed), $exit, "\ncmd=$cmd\nout=$out"), 1);
 		if (!$result) $error = "Pid [$pid] process child not found.";
 		return $result;
 	}
@@ -801,13 +902,21 @@ class Process
 		else $cmd = sprintf('ps -p %d -opid=,cmd= 2>&1', $pid);
 
 		//run command
-		if (($out = static::run($cmd, $err)) === false){
-			$error = "Pid [$pid] process exists exec failure: $err";
+		$out = null;
+		$err = null;
+		$exit = null;
+		static::_no_verbose(function() use (&$out, &$cmd, &$err, &$exit){
+			$out = static::run($cmd, $err, $proc);
+			$exit = $proc -> exit;
+		});
+		if ($out === false){
+			$error = "Pid [$pid] process exists exec failure (exit=$exit): $err";
 			return false;
 		}
 
 		//result
 		$result = ($out = trim($out)) && strpos($out, "$pid") !== false ? $pid : 0;
+		if (self::$VERBOSE) static::_verbose(sprintf('> static::exists(pid=%s) -> (result=%s, exit=%s) %s', $pid, json_encode($result), $exit, "\nout=" . $out), 1);
 		return $result;
 	}
 
@@ -829,32 +938,44 @@ class Process
 		else $cmd = sprintf('kill -s 9 %s 2>&1', $pid);
 
 		//run command
-		if (($out = static::run($cmd, $err)) === false){
-			$error = "Pid [$pid] process kill exec failure: $err";
+		$out = null;
+		$err = null;
+		$exit = null;
+		static::_no_verbose(function() use (&$out, &$cmd, &$err, &$exit){
+			$out = static::run($cmd, $err, $proc);
+			$exit = $proc -> exit;
+		});
+		if ($out === false){
+			$error = "Pid [$pid] process kill exec failure (exit=$exit): $err";
 			return false;
 		}
 
-		//parse output - killed status
-		$status = null;
+		//parse output
+		$result = null;
 		if ($out = trim($out)){
-			$status = 1;
+			$result = 1;
 			if ($is_win){
-				if (stripos($out, 'no tasks') !== false || stripos($out, 'not found') !== false) $status = -1;
+				if (stripos($out, 'no tasks') !== false || stripos($out, 'not found') !== false) $result = -1;
 			}
-			else if (stripos($out, 'no such process') !== false) $status = -1;
+			else if (stripos($out, 'no such process') !== false) $result = -1;
 		}
 
 		//verify dead
-		if (!$status){
-			if (static::exists($pid)){
+		if (!$result){
+			$exists = null;
+			static::_no_verbose(function() use (&$exists, &$pid){
+				$exists = static::exists($pid);
+			});
+			if ($exists){
 				$error = "Pid [$pid] process kill failed. (still running)";
 				return false;
 			}
-			else $status = -1;
+			else $result = -1;
 		}
 
 		//result
-		return $status;
+		if (self::$VERBOSE) static::_verbose(sprintf('> static::kill(pid=%s) -> (result=%s, exit=%s)', $pid, $result, $exit), 1);
+		return $result;
 	}
 
 	/**
@@ -1020,7 +1141,11 @@ class Process
 		if (!($pid = static::pid($pid, $error))) return false;
 		$poll_callback = is_callable($poll_callback) ? $poll_callback : null;
 		return static::poll(function() use (&$pid, &$exists, &$poll_callback){
-			if (!!static::exists($pid) === !!$exists) return true;
+			$pid_exists = null;
+			static::_no_verbose(function() use (&$pid_exists, &$pid){
+				$pid_exists = static::exists($pid);
+			});
+			if (!!$pid_exists === !!$exists) return true;
 			if ($poll_callback && call_user_func($poll_callback)) return true;
 		}, $sleep_ms, $timeout, $error);
 	}
@@ -1143,7 +1268,7 @@ class Process
 
 		//init
 		$output = '';
-		$read_size = 4096;
+		$read_size = 4096; //DEBUG: 1024
 		$buffer_callback = is_callable($buffer_callback) ? $buffer_callback : null;
 		$_restore = static::no_limit($ignore_abort);
 		if ($print) static::print_start();
@@ -1215,7 +1340,7 @@ class Process
 
 		//init
 		$output = '';
-		$read_size = 4096;
+		$read_size = 4096; //DEBUG: 1024 * 8 (4096 * 2)
 		$buffer_callback = is_callable($buffer_callback) ? $buffer_callback : null;
 		$pid = is_numeric($pid) && ($pid = (int) $pid) >= 1 ? $pid : null;
 		$seek = is_numeric($seek) && ($seek = (int) $seek) >= 0 ? $seek : 0;
@@ -1299,7 +1424,9 @@ class Process
 
 			//check stop/retry
 			if (!$abort && $pid){
-				if (!$stop) $exists = static::exists($pid);
+				if (!$stop) static::_no_verbose(function() use (&$exists, &$pid){
+					$exists = static::exists($pid);
+				});
 				if (!$exists){
 					$stop ++;
 					if ($stop < 3){
@@ -1364,7 +1491,11 @@ class Process
 		$resumed = null;
 		$pid_file = is_string($pid_file) && ($pid_file = trim($pid_file)) ? $pid_file : null;
 		if (is_file($pid_file) && ($pid = static::pid(file_get_contents($pid_file)))){
-			if (static::exists($pid)){
+			$exists = null;
+			static::_no_verbose(function() use (&$exists, &$pid){
+				$exists = static::exists($pid);
+			});
+			if ($exists){
 				if ($resume){
 					$resumed = 1;
 					return $pid;

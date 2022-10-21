@@ -52,14 +52,13 @@ function _echo($value, $br=1, $exit_status=null){
 
 	//print out
 	Process::print_out($value, $br, $str);
-	if (_option('worker')) _write(_option('log_file'), trim($str) . "\n", 1); //FIX: DEBUG:
+	if (is_array(_option('worker'))) _write(_option('log_file'), trim($str) . "\n", 1); //DEBUG:
 	if (is_integer($exit_status)) exit($exit_status);
 }
 
 //failure
 function _failure($error){
 	if (_option('worker')) throw new Exception($error);
-	_write(_option('err_file'), trim($error) . "\n", 1);
 	_echo("FAILURE: $error", 1, 1);
 }
 
@@ -162,7 +161,6 @@ function _kill_pid($pid){
 }
 
 //buffer running
-//FIX: refactor
 function _buffer_running($data=null){
 	$is_cache = !!($data = _cache_data($data));
 	if (!$is_cache && !($data = _cache_get())) return;
@@ -170,11 +168,18 @@ function _buffer_running($data=null){
 	//opened/resumed process
 	$cmd = $data['cmd'];
 	$pid = $data['pid'];
+	$tmp = "[resume: $pid]> $cmd";
 	if ($data['type'] === 'worker'){
-		$cmd = sprintf('[%s] %s - (%s)', $pid, $cmd, $data['child_cmd']);
-		$pid = $data['child_pid'];
+		//if (_option('mypid') !== $pid) ;
+		if ($tmp = $data['child_pid']){
+			$m = _option('mypid');
+			print("- buffer child_pid=$tmp, pid=$pid, mypid=$m\n");
+			$pid = $tmp;
+		}
+		$tmp = "[resume-worker: $pid]> $cmd";
+		if ($_cmd = $data['child_cmd']) $tmp .= " ($_cmd)";
 	}
-	if (!$is_cache) _echo("[resume: $pid]> $cmd");
+	if (!$is_cache) _echo($tmp);
 
 	//output buffer
 	$_restore = Process::no_limit();
@@ -186,7 +191,7 @@ function _buffer_running($data=null){
 			if ($res === false) throw new Exception("Buffer Error: $error");
 			else _cache_get(1);
 		}
-		else {
+		elseif (Process::exists($pid)){
 			_echo("[$pid]> process output log file not found - polling...");
 			$res = Process::poll_exists($pid, false, function() use (&$pid, &$abort) {
 				if (connection_aborted()){
@@ -209,21 +214,18 @@ function _buffer_running($data=null){
 }
 
 //command line
-//FIX: refactor
-function _command($cmd, $stdout=0){
+function _command($cmd, $stdout=0, $php_self=0){
 	static $php;
-	
-	//check cmd
 	if (!(is_string($cmd) && ($cmd = trim($cmd)))) return _failure('Empty command line.');
 	
-	//php executable
+	//set php
 	if (!$php){
-		$php = Process::find_php();
-		if (strpos($php, ' ') !== false) $php = '"' . $php . "'";
+		if (!($tmp = Process::find_php())) return _failure('Failed to get PHP executable path. Set it manually using $GLOBALS["__PHP_EXE__"]');
+		$php = strpos($tmp, ' ') !== false ? '"' . $tmp . "'" : $tmp;
 	}
 
-	//show php executable
-	if (strtolower($cmd) === 'php') return _echo("$cmd -> $php\n", 1, 0);
+	//php self
+	if ($php_self) $cmd = $php . ' ' . _option('target_arg') . ' ' . $cmd;
 	
 	//parse cmd - check stdout, stderr
 	if (strpos($cmd, '>') !== false){
@@ -233,16 +235,8 @@ function _command($cmd, $stdout=0){
 	}
 
 	//normalize
-	if (stripos($cmd, 'php self') === 0){
-		$file = _option('target');
-		if (strpos($file, ' ') !== false) $file = '"' . $file . '"';
-		$cmd = preg_replace('/^php self\s+/i', "$php $file ", $cmd);
-	}
-	elseif (stripos($cmd, 'php') === 0) $cmd = preg_replace('/^php\s+/i', "$php ", $cmd);
-	elseif (stripos($cmd, 'composer') === 0){
-	    if (strtolower($cmd) === 'composer') $cmd = "$php composer";
-		else $cmd = preg_replace('/^composer\s+/i', "$php composer ", $cmd);
-	}
+	if (stripos($cmd, 'php') === 0) $cmd = preg_replace('/^php(\s+)?/i', "$php\$1", $cmd);
+	elseif (stripos($cmd, 'composer') === 0) $cmd = preg_replace('/^composer(\s+)?/i', "$php composer\$1", $cmd);
 
 	//stdout log
 	if ($stdout) $cmd .= ($stdout === 2 ? ' >> ' : ' > ') . _option('stdout');
@@ -252,56 +246,35 @@ function _command($cmd, $stdout=0){
 	return $cmd;
 }
 
-//run background process
-//FIX: refactor
+//putenv - COMPOSER_HOME
+function _putenv_composer_home(){
+	$dir = _option('cwd') . '/vendor/bin/composer';
+	if (!is_dir($dir) && !@mkdir($dir, 0775, 1)) return _failure("Create COMPOSER_HOME dir. ($dir)");
+	if (!($COMPOSER_HOME = realpath($dir))) return _failure("Invalid COMPOSER_HOME dir realpath. ($dir)");
+	putenv('COMPOSER_HOME=' . $COMPOSER_HOME);
+	return $COMPOSER_HOME;
+}
+
+//run
 function _run($cmd, $cached=0){
+	if (stripos($cmd, 'composer') !== false) _putenv_composer_home();
 	$pid_file = $cached ? _option('pid_file') : null;
-	/*
-	$proc = new Process($cmd, ['cwd' => _option('cwd')], 1);
-	if (!$proc -> open(function($p){
-	    $p -> close_pipe(0);
-	})) return _failure("Run Error: " . $proc -> error);
-	if (!($pid = Process::pid($proc -> pid, $err))){
-	    $proc -> close(1);
-	    return _failure("Run PID Error: $err");
-	}
-	$GLOBALS['__proc__'] = $proc;
-	if ($pid_file) _write($pid_file, "$pid");
-	sleep(1);
-	//*/
-	/*
-	$pid = Process::run_bg($cmd, $error, ['cwd' => _option('cwd')], $cb=null, $pid_file);
-	if (!$pid) return _failure("Run Error: $error");
-	//*/
-	putenv('COMPOSER_HOME=' . _option('cwd') . '/vendor/bin/composer');
-	$cmd .= ' & echo $!';
-	$out = shell_exec($cmd);
-	if (!($pid = Process::pid((int) trim($out), $err))) return _failure("Shell exec failed: $err ($cmd)");
-	$res = Process::exists($pid);
-	//DEBUG: _echo("[$pid] started...");
+	$pid = Process::run_bg($cmd, $error, $_options=null, $pid_file, $_resume=true, $resumed);
+	if (!$pid) return _failure("Process Error: $error");
 	return [
 		'cmd' => $cmd,
 		'pid' => $pid
 	];
 }
 
-//run resume
-function _run_resume(){
-	$res = _buffer_running();
-	if ($data = _cache_get(1)) return _failure(sprintf('Previous %s is still running. [%s] (%s)', $data['type'], $data['pid'], $data['cmd']));
-}
-
 //run cached process
-//FIX: refactor
-function _run_cached($cmd){
-	_run_resume();
-	$cmd = _command($cmd, 1);
-	//DEBUG: _echo(">> $cmd");
+function _run_cached($cmd, $php_self=0){
+	_buffer_running();
+	$cmd = _command($cmd, 1, $php_self);
+	_echo(">> $cmd"); //DEBUG:
 	$data = _run($cmd, 1);
 	$data = _cache_set($data);
 	$res = _buffer_running($data);
-	if ($res !== false) _run(_command('php self clear')); //auto cleanup
-	return $res;
 }
 
 //worker cache
@@ -333,18 +306,14 @@ function _worker_set($data){
 }
 
 //worker
-//FIX: refactor
 function _worker($cmd, $handler){
 	if (!is_callable($handler)) return _failure('Worker handler is not callable.');
-	_run_resume();
-	_echo(">>> $cmd...");
+	_buffer_running();
 	_worker_set(['cmd' => $cmd]);
 	$_restore = Process::no_limit();
 	$_done = function() use (&$_restore, &$cmd){
 		$_restore();
-		//_cleanup(2);
 		_option('worker', null);
-		_echo(">>> $cmd done.");
 	};
 	try {
 		$handler();
@@ -356,18 +325,18 @@ function _worker($cmd, $handler){
 	}
 }
 
-//worker install composer
-//FIX: refactor
-function _worker_install_composer(){
+//install composer
+function _install_composer(){
 	_worker('install-composer', function(){
-		$ts = microtime(1);
-		
-		//copy helper
+		$composer_file = _option('composer_file');
+		_echo(sprintf('%s composer...', is_file($composer_file) ? 'Updating' : 'Installing'));
+
+		//fetch copy
 		$_copy = function ($source, $dest){
 			$tmp = basename($dest);
-			_echo("\nCopy: $source -> $tmp");
+			_echo("Copy: $source -> $tmp");
 			if (copy($source, $dest)) return true;
-			return _failure("Unable to copy ($source -> $dest)");
+			return _failure("Copy failed ($source -> $dest)");
 		};
 		
 		//composer files
@@ -375,65 +344,52 @@ function _worker_install_composer(){
 		$sig_file = $cwd . '/composer.sig';
 		$setup_file = $cwd . '/composer-setup.php';
 		$phar_file = $cwd . '/composer.phar';
-		$composer_file = $cwd . '/composer';
 		
 		//get signature
+		_echo("\nGet setup signature...");
 		$_copy('https://composer.github.io/installer.sig', $sig_file);
 		$sig = trim(_read($sig_file));
 		_delete($sig_file);
 		_echo("Signature: $sig");
 	
 		//get setup
-		$setup_file = _option('cwd') . '/composer-setup.php';
+		_echo("\nGet composer setup (verify hash)...");
 		$_copy('https://getcomposer.org/installer', $setup_file);
 		if (hash_file('sha384', $setup_file) !== $sig){
 			_delete($setup_file);
-			$eta = time() - $ts;
-			return _failure("Installer corrupt - deleted. ($eta sec)\n");
+			return _failure('Corrupt installer - deleted');
 		}
-		$eta = microtime(1) - $ts;
-		_echo("Installer verified. ($eta sec)");
+		_echo('Installer verified');
 		
-		//run setup
-		$ts = microtime(1);
-		_echo("\nSetup composer...");
+		//install composer
+		_echo("\nInstall composer...");
 		_delete($phar_file);
+		_write(_option('log_file'), '');
 		$cmd = _command('php composer-setup.php', 2);
-		/*
-		_echo("exec>> $cmd");
-		$res = exec($cmd . ' & echo $!', $output, $exit);
-		_echo(['output' => $output, 'exit' => $exit]);
-		if ($res === false) return _failure('Exec failed.');
-		*/
-		///*
 		$data = _run($cmd, 1);
 		$res = _buffer_running(_worker_set([
 			'expires' => time() + 5,
 			'child_cmd' => $data['cmd'],
 			'child_pid' => $data['pid'],
 		]));
-		$eta = microtime(1) - $ts;
 		if ($res === false){
 			_kill_pid($data['pid']);
-			return _failure("Setup composer interrupted. ($eta sec)");
+			return _failure('Install composer interrupted.');
 		}
-		//*/
-		_echo("Setup done. ($eta sec)");
+		if (!(is_file($phar_file) && ($phar_file = realpath($phar_file)))) return _failure("Installed file not found. ($phar_file)");
+		_delete($setup_file);
 
-		//finalizing
+		//finalizing (rename)
 		_worker_set([
 			'expires' => 0,
 			'child_cmd' => null,
 			'child_pid' => null,
 		]);
-		$ts = microtime(1);
-		_echo('Finalizing composer installation...');
-		if (!is_file($phar_file)) return _failure("Installed file not found. ($phar_file)");
-		_delete($setup_file);
+		$tmp = basename($composer_file);
+		_echo("Rename: $phar_file -> $tmp");
 		_delete($composer_file);
-		if (!rename($phar_file, $composer_file)) return _failure("Rename failed. ($phar_file > $composer_file)");
-		$eta = microtime(1) - $ts;
-		_echo("Installed: $composer_file ($eta sec)", 1, 0);
+		if (!rename($phar_file, $composer_file)) return _failure("Rename failed. ($phar_file -> $composer_file)");
+		_echo('Installation complete.');
 	});
 }
 
@@ -455,7 +411,7 @@ function _test_requirements(){
 	//init vars
 	$errors = [];
 	$fails = 0;
-	$sp = ($is_console = Process::is_console()) ? '  ' : ' ';
+	$sp = ($is_console = _option('is_console')) ? '  ' : ' ';
 	$pass = '✔️' . $sp;
 	$fail = '❌' . $sp;
 
