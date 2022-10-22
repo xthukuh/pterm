@@ -7,3 +7,5 @@ Thumbs.db
 *.log
 *.zip
 composer*
+pterm*
+__pterm*

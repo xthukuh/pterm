@@ -633,7 +633,7 @@ class Process
 	 *    'stderr_merge' => 0,		//(int/bool) whether command has 2>&1
 	 * ];
 	 * 
-	 * - 'cmd_bg' format - windows platform: "start /b /separate [COMMAND] >nul 2>&1 &"
+	 * - 'cmd_bg' format - windows platform: "start /b [COMMAND] >nul 2>&1 &"
 	 * - 'cmd_bg' format - other platform (linux/unix): "[COMMAND] >/dev/null 2>&1 & echo &!"
 	 * 
 	 * @param  string	$cmd	- command line string
@@ -773,7 +773,7 @@ class Process
 		//background command - platform format
 		if ($as_win){
 			if (preg_match($tmp = '/^(start\s*(\/b)?)((?![a-z]).+)$/i', $bg)) $bg = trim(preg_replace('/\s+/', ' ', preg_replace($tmp, '$3', $bg)));
-			$bg = 'start /b /separate ' . $bg . ' &';
+			$bg = 'start /b ' . $bg . ' &';
 		}
 		else $bg .= ' & echo $!';
 		unset($tmp, $q, $quote);
