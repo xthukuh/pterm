@@ -6,7 +6,5 @@ Thumbs.db
 *.xx*
 *.log
 *.zip
-composer
-composer.sig
-composer.phar
-composer-setup.php
+composer*
+__pterm*

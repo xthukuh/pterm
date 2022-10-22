@@ -8,15 +8,28 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title><?php echo _option('title'); ?></title>
 	<script type="text/javascript">
-		window.CONFIG = <?php echo json_encode(['resume' => _option('resume'), 'cwd' => _option('cwd'), 'target' => _option('target')]); ?>;
+		window.CONFIG = <?php echo json_encode([
+			'target' => _option('target'),
+			'cwd' => _option('cwd'),
+			'mypid' => _option('mypid'),
+			'resume' => _option('resume'),
+			'composer' => is_file(_option('composer_file')),
+		]); ?>;
 	</script>
 	<style>
 		.container {
+			flex-grow: 1;
+			display: flex;
+			flex-direction: column;
+			background: #fff;
+			border: 1px solid #ddd;
+			margin: 20px auto;
 			min-width: 70%;
 		}
 		@media only screen and (max-width: 768px){
 			.container {
-				min-width: 90%;
+				min-width: 100%;
+				margin: 0 auto;
 			}
 		}
 		.input {
@@ -45,7 +58,7 @@
 </head>
 <body style="position:fixed;top:0;left:0;width:100%;height:100%;margin:0;font-family:'monospace',consolas;background-color:#eee;">
 	<div style="position:relative;width:100%;height:100%;display:flex;flex-direction:column;">
-		<div class="container" style="flex-grow:1;display:flex;flex-direction:column;background:#fff;border:1px solid #ddd;margin:20px auto;">
+		<div class="container">
 			
 			<!-- head -->
 			<div style="padding:10px;text-align:center;">
@@ -72,13 +85,10 @@
 
 				<!-- buttons -->
 				<div style="padding:10px 10px 20px;gap:10px;display:flex;flex-direction:row;flex-wrap:wrap;border-top:1px solid #ddd;justify-content:start;">
-					<button id="btn_requirements" class="btn" type="button" title="Test Requirements">Test Requirements</button>
+					<button id="btn_requirements" class="btn" type="button" title="Check Requirements">Requirements</button>
 					<button id="btn_install_composer" class="btn" type="button" title="Install Composer">Install Composer</button>
 					<button id="btn_clear" class="btn" type="button" title="Clear Output">Clear</button>
 					<button id="btn_cancel" class="btn" type="button" title="Cancel Running">Cancel</button>
-					<div style="flex-grow:1;display:inline-flex;flex-direction:row;justify-content:end;">
-						<button id="btn_run" class="btn" type="submit" title="Run Command">Run</button>
-					</div>
 				</div>
 			</form>
 		</div>
@@ -86,8 +96,13 @@
 	<script type="text/javascript">
 		
 		//config
-		let IS_CANCELLED, IS_DISABLED, ENDPOINT = window.location.href, CONFIG = window.CONFIG || {};
-		console.table(CONFIG);
+		let IS_CANCELLED, RUN_TEST, IS_DISABLED, ENDPOINT = window.location.href, CONFIG = window.CONFIG || {};
+		Object.entries(CONFIG).forEach(entry => {
+			let [key, val] = entry;
+			if (!val) return;
+			if ('object' === typeof val) val = Object.values(val).join(' ');
+			console.log(`%c${key.toUpperCase()}`, 'color:blue', val);
+		});
 		
 		//output wrapper - scroll
 		const output_wrapper = document.getElementById('output_wrapper');
@@ -108,15 +123,23 @@
 		const output = document.getElementById('output');
 		const output_prompt = '>_';
 		const outputClear = text => output.innerText = output_prompt;
-		const outputText = text => {
-			output.innerText = output.innerText.replace(new RegExp(`\n?${output_prompt}\s*$`, 'g'), '') + String(text);
+		const outputText = (text, is_cmd) => {
+			let out = output.innerText.replace(new RegExp(`\n?${output_prompt}\s*$`, 'g'), '');
+			if (is_cmd) out = out.trim();
+			if (is_cmd && out.length) out += new RegExp('(\n|^)>[^\n]*$').test(out) ? '\n' : '\n\n';
+			output.innerText = out + String(text);
 			outputScrollBottom();
 		};
 		const outputPrompt = () => {
-			output.innerText = output.innerText.trim() + '\n\n' + output_prompt;
+			let out = output.innerText.trim();
+			if (out.length) out += new RegExp('(\n|^)>[^\n]*$').test(out) ? '\n' : '\n\n';
+			output.innerText = out + output_prompt;
 			outputScrollBottom();
 		};
-		const outputCmd = cmd => outputText((output.innerText.indexOf('\n') > -1 ? '\n' : '') + '> ' + cmd + '\n');
+		const outputCmd = cmd => {
+			//outputText((output.innerText.indexOf('\n') > -1 ? '\n' : '') + '> ' + cmd + '\n');
+			outputText('> ' + cmd + '\n', 1);
+		};
 
 		//controls
 		const cmd_form = document.getElementById('cmd_form');
@@ -124,14 +147,13 @@
 		const btn_requirements = document.getElementById('btn_requirements');
 		const btn_install_composer = document.getElementById('btn_install_composer');
 		const btn_clear = document.getElementById('btn_clear');
-		const btn_run = document.getElementById('btn_run');
 		const btn_cancel = document.getElementById('btn_cancel');
 
 		//disabled
 		const setDisabled = (disabled=true, cancel) => {
 			IS_DISABLED = disabled = !!disabled;
 			cancel = cancel === undefined ? !disabled : !!cancel;
-			[btn_requirements, btn_install_composer, btn_clear, btn_run].forEach(element => {
+			[btn_requirements, btn_install_composer, btn_clear].forEach(element => {
 				if (disabled) element.setAttribute('disabled', 'disabled');
 				else element.removeAttribute('disabled');
 			});
@@ -238,6 +260,7 @@
 			});
 		}
 		const fetchCancel = async () => {
+			if (RUN_TEST) RUN_TEST = undefined;
 			if (IS_CANCELLED) return console.warn('Fetch cancel is busy.');
 
 			//cancel busy
@@ -253,12 +276,7 @@
 
 			//cancel fetch
 			if (FETCH_EXEC){
-				
-				//aborting
-				outputText('Aborting...\n');
 				fetchAbort();
-				
-				//result - fetch request promise
 				return fetchExec('cancel', true)
 				.finally(() => {
 					if (FETCH_EXEC) return;
@@ -272,16 +290,16 @@
 
 		//run test
 		const runTest = () => {
+			RUN_TEST = 1;
 			setDisabled(true);
-			outputCmd('test');
+			outputCmd('run test (js)');
 			let x = 0, max = 100, interval = setInterval(() => {
 				x ++;
-				outputText(`[${x}/${max}] - test line.\n`);
-				if (x === max || IS_CANCELLED){
+				if (RUN_TEST) outputText(`[${x}/${max}] - test line.\n`);
+				if (x === max || !RUN_TEST){
 					clearInterval(interval);
 					if (IS_CANCELLED) return IS_CANCELLED();
 					setDisabled(false);
-					outputText(output_prompt);
 				}
 			}, 200);
 		};
@@ -348,8 +366,7 @@
 		input_cmd.placeholder = output_prompt;
 		input_cmd.focus();
 		setDisabled(false);
-
-		//resume
+		if (CONFIG.composer) btn_install_composer.style.display = 'none';
 		if (CONFIG.resume) ACTIONS.resume();
 	</script>
 </body>

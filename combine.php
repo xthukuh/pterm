@@ -5,11 +5,7 @@
  */
 
 //source files
-#$_process = __DIR__ . '/Process.dev.php';
-$_process = __DIR__ . '/Process.php';
-$_funcs = __DIR__ . '/_funcs.php';
-$_main = __DIR__ . '/_main.php';
-$_html = __DIR__ . '/_html.php';
+require_once __DIR__ . '/src/inc/__sources.php';
 
 //combined basename
 $combined = '__pterm.php';
@@ -29,13 +25,13 @@ $_append = function($data) use (&$file){
 };
 
 //helper - read/write
-$_read_write = function($path, $is_php=0) use (&$_append){
+$_read_write = function($path, $is_html=0) use (&$_append){
 	$replaced = 0;
 	$fr = fopen($path, 'rb');
 	while (!feof($fr)){
 		$buffer = fread($fr, 4096 * 2);
 		if (strlen($buffer)){
-			if (!$replaced && $is_php){
+			if (!$replaced && !$is_html){
 				if (strpos($buffer, '<?php') !== false){
 					$buffer = trim(str_replace('<?php', '', $buffer));
 					$replaced = 1;
@@ -60,23 +56,27 @@ $_append("\n * =================================================================
 $_append("\n * NCMS P-Term ~ By @xthukuh (https://github.com/xthukuh)");
 $_append("\n * =============================================================================");
 $_append("\n */");
-$_append("\n\n\n\$GLOBALS['__TARGET__'] = __FILE__;");
+$_append("\n\n\nif (!defined('P_TERM')) define('P_TERM', __FILE__);");
 
 #!_main
 $_append($_div('_main') . "\n");
-$_read_write($_main, 1);
+$_read_write($inc_main);
 
 #!Process
 $_append($_div('Process') . "\n");
-$_read_write($_process, 1);
+$_read_write($inc_process);
 
 #!_funcs
 $_append($_div('_funcs') . "\n");
-$_read_write($_funcs, 1);
+$_read_write($inc_funcs);
+$_read_write($inc_funcs_composer);
+//TODO: $_read_write($inc_funcs_repo);
+$_read_write($inc_funcs_requirements);
+$_read_write($inc_funcs_test);
 
 #!_html
 $_append($_div('_html') . "?>\n\n");
-$_read_write($_html);
+$_read_write($inc_html, 1);
 
 //done
 echo '- Done: ' . realpath($file) . "\n";

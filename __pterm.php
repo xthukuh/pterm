@@ -7,103 +7,131 @@
  */
 
 
-$GLOBALS['__TARGET__'] = __FILE__;
+if (!defined('P_TERM')) define('P_TERM', __FILE__);
 
 #================================  !_main    =================================
 
-//global options
-$cwd = getcwd();
-$target = $GLOBALS['__TARGET__'];
+//target file
+$target = defined('P_TERM') ? P_TERM : null;
+if (!($target && is_file($target))) _failure($target ? "Invalid target file (\P_TERM=$target)" : 'Undefined target file (\P_TERM)');
 $target_arg = strpos($target, ' ') !== false ? '"' . $target . "'" : $target;
+
+//set options
+$version = '1.0.0';
+$cwd = getcwd();
 $options = [
-	'title' => 'P-TERM',
+	'title' => 'P-TERM v' . $version,
+	'version' => $version,
 	'mypid' => getmypid(),
-	'stdout' => ($tmp = '__install.log'),
+	'stdout' => ($tmp = '__pterm.log'),
 	'log_file' => $cwd . '/' . $tmp,
-	'pid_file' => $cwd . '/__install.pid',
-	'tmp_file' => $cwd . '/__install.tmp',
+	'cache_file' => $cwd . '/__pterm.cache',
 	'composer_file' => $cwd . '/composer',
 	'target' => $target,
 	'target_arg' => $target_arg,
-	'method' => ($method = isset($_SERVER) && isset($_SERVER['REQUEST_METHOD']) ? strtolower($_SERVER['REQUEST_METHOD']) : null),
-	'request' => isset($_REQUEST) ? $_REQUEST : null,
 	'cwd' => $cwd,
 	'cmd' => null,
-	'worker' => null,
 	'resume' => null,
-	'page' => $method === 'get' ? 1 : 0,
+	'page' => 0,
 	'is_console' => Process::is_console(),
 ];
 if (isset($argv) && is_array($argv) && ($len = count($argv))){
-	if (isset($argv[1]) && ($val = trim($argv[1]))) $options['cmd'] = $val;
+	if ($len > 1){
+		$val = array_slice($argv, 1);
+		if ($val = trim(implode(' ', $val))) $options['cmd'] = $val;
+	}
 }
 else {
-	if (!empty($_REQUEST)){
-	    if ($options['method'] === 'get') $options['page'] = -1;
+	$options['method'] = $method = isset($_SERVER) && isset($_SERVER['REQUEST_METHOD']) ? strtolower($_SERVER['REQUEST_METHOD']) : null;
+	if ($method === 'get') $options['page'] = 1;
+	if (isset($_REQUEST) && is_array($_REQUEST) && !empty($_REQUEST)){
+		if ($method === 'get') $options['page'] = -1;
 		if (
-		    in_array($options['method'], ['get', 'post'])
+			in_array($method, ['get', 'post'])
 			&& array_key_exists('cmd', $_REQUEST)
 			&& ($val = trim($_REQUEST['cmd']))
 		){
-		    $options['cmd'] = $val;
-		    $options['page'] = 0;
+			$options['cmd'] = $val;
+			$options['page'] = 0;
 		}
-	}
-	if ($options['page'] < 0){
-	    _redirect();
-	    exit;
 	}
 }
 $GLOBALS['__options__'] = $options;
-if (!is_file(_option('target'))) _failure('Installer target file is invalid!');
 
 //handle command
 if ($cmd = _option('cmd')){
-    switch (strtolower($cmd)){
+	switch (strtolower($cmd)){
+		
+		//exit
+		case 'exit':
+			break;
+
+		//php
 		case 'php':
-			_echo('PHP: ' . Process::find_php(), 1, 0);
+			_echo('- PHP_EXE: ' . Process::find_php(), 1, 0);
 			break;
+		
+		//test requirements
 		case 'requirements':
-		    _run_cached('test-requirements', 1);
+			_run_bg('requirements-worker', 1);
 			break;
-		case 'test-requirements':
-			_test_requirements();
+		case 'requirements-worker':
+			_check_requirements();
 			break;
+		
+		//test lines
 		case 'test':
-			_run_cached('test-lines', 1);
+			_run_bg('test-worker', 1);
 			break;
-		case 'test-lines':
+		case 'test-worker':
 			_test_lines();
 			break;
+		
+		//install/update composer
 		case 'install-composer':
+			_run_bg('install-composer-worker', 1);
+			break;
+		case 'install-composer-worker':
 			_install_composer();
 			break;
+		
+		//resume running - buffer
 		case 'resume':
-			_buffer_running();
+			_output();
 			break;
+		
+		//cancel running
 		case 'cancel':
-			_echo('> Cancel...');
-			_cache_get(1, 1);
-			exit(0);
+			_cache_get(-1, 1);
 			break;
+		
+		//clear cache
 		case 'clear':
-			_echo('> Clear...');
-			if (!_option('method')) sleep(1);
+			if (_option('is_console') === 1) sleep(1);
 			_cache_get(1);
-			exit(0);
 			break;
+		
+		//custom command
 		default:
-			_run_cached($cmd);
+			_run_bg($cmd);
 			break;
 	}
+
+	//exit - done
+	exit;
 }
 
-//show page
-if (!$options['page']){
-    //_echo(['options' => _option()]);
-    exit(2);
+//redirect - html page
+if (($page = _option('page')) < 0){
+	_redirect();
+	exit;
 }
-_option('resume', _cache_get(1));
+
+//exit - no html/unsupported
+if (!$page) exit(2);
+
+//html page
+_option('resume', _cache_get(-1));
 
 #================================  !Process  =================================
 
@@ -1550,13 +1578,11 @@ function _echo($value, $br=1, $exit_status=null){
 
 	//print out
 	Process::print_out($value, $br, $str);
-	if (is_array(_option('worker'))) _write(_option('log_file'), trim($str) . "\n", 1); //DEBUG:
 	if (is_integer($exit_status)) exit($exit_status);
 }
 
 //failure
 function _failure($error){
-	if (_option('worker')) throw new Exception($error);
 	_echo("FAILURE: $error", 1, 1);
 }
 
@@ -1583,13 +1609,6 @@ function _delete($path, $fails=1){
 	return true;
 }
 
-//cleanup
-function _cleanup($fails=0){
-	_delete(_option('tmp_file'), $fails);
-	_delete(_option('log_file'), $fails === 1);
-	_delete(_option('pid_file'), $fails);
-}
-
 //cache data
 function _cache_data($data){
 	if (!(
@@ -1599,116 +1618,87 @@ function _cache_data($data){
 		&& isset($data[$key = 'pid'])
 		&& ($pid = Process::pid($data[$key]))
 	)) return false;
-	$type = isset($data[$key = 'type']) && in_array($val = trim(strtolower($data[$key])), ['process', 'worker']) ? $val : 'process';
-	$expires = isset($data[$key = 'expires']) && is_integer($val = $data[$key]) && $val >= 0 ? $val : 0;
-	$child_cmd = isset($data[$key = 'child_cmd']) && ($val = trim($data[$key])) ? $val : null;
-	$child_pid = isset($data[$key = 'child_pid']) && ($val = Process::pid($data[$key])) ? $val : null;
 	return [
 		'cmd' => $cmd,
 		'pid' => $pid,
-		'type' => $type,
-		'expires' => $expires,
-		'child_cmd' => $child_cmd,
-		'child_pid' => $child_pid,
+		'mypid' => _option('mypid'),
 	];
 }
 
 //cache set
 function _cache_set($data){
 	if (!($data = _cache_data($data))) return _failure('Invalid cache data.');
-	_write(_option('tmp_file'), $data);
+	_write(_option('cache_file'), $data);
 	return $data;
 }
 
-//cache get
-function _cache_get($running=0, $kill=0){
-	if (!is_file($path = _option('tmp_file'))) return;
-	if (!($data = _cache_data(_read($path, 1)))) return _failure("Invalid cache file data contents. ($path)");
-	$is_worker = $data['type'] === 'worker';
-	$is_running = 0;
-	if ($is_worker){
-		if (time() < $data['expires']){
-			if ($pid = $data['child_pid']){
-				if ($res = Process::exists($pid, $err)) $is_running = $res;
-				if ($res === false) return _failure($err);
+//cache get - cleanup (not running)
+function _cache_get($is_running=0, $kill=0){
+	if (is_file($path = _option('cache_file')) && ($data = _cache_data(_read($path, 1)))){
+		if (!$is_running && !$kill) return $data; //default
+		if ($pid = Process::exists($data['pid'], $err)){
+			if ($kill){
+				if (($res = Process::kill($pid, $error)) === false) return _failure($error);
+				if ($res === 1){
+					_echo('');
+					_echo(sprintf('- killed [pid: %s, mypid=%s] %s', $pid, $data['mypid'], $data['cmd']));
+					usleep(200 * 1000); //delay 200ms
+				}
 			}
-			else $is_running = -1;
+			elseif ($is_running) return $data; //running
 		}
+		elseif ($pid === false) return _failure('Cache get process exists error: ' . $err);
 	}
-	else {
-		if ($res = Process::exists($data['pid'], $err)) $is_running = $res;
-		if ($res === false) return _failure($err);
-	}
-	if ($is_running){
-		if ($kill){
-			if ($is_running >= 1) _kill_pid($is_running);
-			else _kill_pid($data['pid']);
-			usleep(200 * 1000); //delay 200ms
-		}
-		else return $data;
-	}
-	_cleanup(2);
-	if (!$running) return $data;
+	if ($is_running < 0) return; //no cleanup
+	_delete(_option('cache_file'));
+	_delete(_option('log_file'));
 }
 
-//kill pid
-function _kill_pid($pid){
-	if (!(is_integer($pid) && $pid >= 1)) return;
-	if (($res = Process::kill($pid, $error)) === false) return _failure($error);
-	return $res;
-}
+//output buffer
+function _output($data=null, $is_running=0){
 
-//buffer running
-function _buffer_running($data=null){
+	//vars
 	$is_cache = !!($data = _cache_data($data));
-	if (!$is_cache && !($data = _cache_get())) return;
-
-	//opened/resumed process
+	if (!$is_cache && !($data = _cache_get($is_running))) return;
 	$cmd = $data['cmd'];
 	$pid = $data['pid'];
-	$tmp = "[resume: $pid]> $cmd";
-	if ($data['type'] === 'worker'){
-		//if (_option('mypid') !== $pid) ;
-		if ($tmp = $data['child_pid']){
-			$m = _option('mypid');
-			print("- buffer child_pid=$tmp, pid=$pid, mypid=$m\n");
-			$pid = $tmp;
+	$mypid = $data['mypid'];
+	if (!$is_cache) _echo("[pid=$pid, mypid=$mypid] $cmd");
+	$_done = function($check_running=0) use (&$pid){
+		if ($check_running && ($_pid = Process::exists($pid))) return $_pid;
+	};
+	
+	//read stdout (log_file)
+	if (is_file($path = _option('log_file'))){
+		$res = Process::read_file($path, $pid, $_seek=0, $_print=true, $_buffer_cb=null, $error, $abort);
+		if ($res === false){
+			_echo("Buffer Error: $error");
+			return $_done(1);
 		}
-		$tmp = "[resume-worker: $pid]> $cmd";
-		if ($_cmd = $data['child_cmd']) $tmp .= " ($_cmd)";
+		return $_done($abort);
 	}
-	if (!$is_cache) _echo($tmp);
-
-	//output buffer
+	
+	//poll running
+	if (!($pid = $_done(1))) return;
+	$abort = 0;
 	$_restore = Process::no_limit();
-	try {
-		$abort = 0;
-		if (is_file($path = _option('log_file'))){
-			$res = Process::read_file($path, $pid, $_seek=0, $_print=true, $_callback=null, $error, $abort);
-			if ($abort) _echo("Buffer abort: $abort");
-			if ($res === false) throw new Exception("Buffer Error: $error");
-			else _cache_get(1);
+	$_poll_echo = function() use (&$pid){
+		_echo("- poll running pid: $pid");
+	};
+	$_poll_echo();
+	$res = Process::poll_exists($pid, false, function() use (&$abort, &$_poll_echo){
+		if (connection_aborted()){
+			$abort = 2;
+			return true;
 		}
-		elseif (Process::exists($pid)){
-			_echo("[$pid]> process output log file not found - polling...");
-			$res = Process::poll_exists($pid, false, function() use (&$pid, &$abort) {
-				if (connection_aborted()){
-					$abort = 2;
-					return true;
-				}
-				_echo("- [$pid] is running.");
-			}, $_sleep_ms=1000, $timeout=null, $error);
-			if ($abort) _echo("Buffer abort: $abort");
-			if (!$res) throw new Exception("Polling Error: $error");
-			if (!$abort) _echo("[$pid] done.", 1, 0);
-		}
-		$_restore();
-		if ($abort) return false;
+		$_poll_echo();
+	}, $_sleep_ms=1000, $_timeout=null, $error);
+	$_restore();
+	if ($res === false){
+		_echo("Poll Error: $error");
+		return $_done(1);
 	}
-	catch (Exception $e){
-		$_restore();
-		return _failure($e -> getMessage());
-	}
+	return $_done($abort);
 }
 
 //command line
@@ -1744,7 +1734,23 @@ function _command($cmd, $stdout=0, $php_self=0){
 	return $cmd;
 }
 
-//putenv - COMPOSER_HOME
+//run background process
+function _run_bg($cmd, $php_self=0){
+	if ($pid = _output(null, 1)) return _failure("Resumed process is still running. (pid=$pid - cancel manually)");
+	if (
+		stripos($cmd, 'composer') !== false
+		&& $cmd !== 'install-composer-worker'
+		&& is_file(_option('composer_file'))
+	) _putenv_composer_home();
+	$_cmd = $cmd;
+	$cmd = _command($cmd, 1, $php_self);
+	$pid = Process::run_bg($cmd, $error);
+	if (!$pid) return _failure("Process Error: $error");
+	return _output(_cache_set([
+		'cmd' => $_cmd,
+		'pid' => $pid
+	]));
+}//putenv - COMPOSER_HOME
 function _putenv_composer_home(){
 	$dir = _option('cwd') . '/vendor/bin/composer';
 	if (!is_dir($dir) && !@mkdir($dir, 0775, 1)) return _failure("Create COMPOSER_HOME dir. ($dir)");
@@ -1753,80 +1759,19 @@ function _putenv_composer_home(){
 	return $COMPOSER_HOME;
 }
 
-//run
-function _run($cmd, $cached=0){
-	if (stripos($cmd, 'composer') !== false) _putenv_composer_home();
-	$pid_file = $cached ? _option('pid_file') : null;
-	$pid = Process::run_bg($cmd, $error, $_options=null, $pid_file, $_resume=true, $resumed);
-	if (!$pid) return _failure("Process Error: $error");
-	return [
-		'cmd' => $cmd,
-		'pid' => $pid
-	];
-}
-
-//run cached process
-function _run_cached($cmd, $php_self=0){
-	_buffer_running();
-	$cmd = _command($cmd, 1, $php_self);
-	_echo(">> $cmd"); //DEBUG:
-	$data = _run($cmd, 1);
-	$data = _cache_set($data);
-	$res = _buffer_running($data);
-}
-
-//worker cache
-function _worker_set($data){
-	$data = is_array($data) ? $data : [];
-
-	//new cache data
-	if (!($worker = _cache_data(_option('worker')))){
-		if (!(array_key_exists($key = 'cmd', $data) && ($cmd = trim($data[$key])))){
-			return _failure('Undefined worker data cmd.');
-		}
-		$worker = [
-			'cmd' => $cmd,
-			'pid' => _option('mypid'),
-			'type' => 'worker',
-			'expires' => time() + 5, //5 sec
-			'child_cmd' => null,
-			'child_pid' => null,
-		];
-	}
-
-	//update cache data
-	if (array_key_exists($key = 'expires', $data)) $worker[$key] = $data[$key];
-	if (array_key_exists($key = 'child_cmd', $data)) $worker[$key] = $data[$key];
-	if (array_key_exists($key = 'child_pid', $data)) $worker[$key] = $data[$key];
-	
-	//save
-	return _option('worker', _cache_set($worker));
-}
-
-//worker
-function _worker($cmd, $handler){
-	if (!is_callable($handler)) return _failure('Worker handler is not callable.');
-	_buffer_running();
-	_worker_set(['cmd' => $cmd]);
-	$_restore = Process::no_limit();
-	$_done = function() use (&$_restore, &$cmd){
-		$_restore();
-		_option('worker', null);
-	};
-	try {
-		$handler();
-		$_done();
-	}
-	catch (Exception $e){
-		$_done();
-		return _failure($e -> getMessage());
-	}
-}
-
 //install composer
 function _install_composer(){
-	_worker('install-composer', function(){
+	$_restore = Process::no_limit();
+	try {
+		
+		//vars
+		$cwd = _option('cwd');
+		$sig_file = $cwd . '/composer.sig';
+		$setup_file = $cwd . '/composer-setup.php';
+		$phar_file = $cwd . '/composer.phar';
 		$composer_file = _option('composer_file');
+		
+		//install/update
 		_echo(sprintf('%s composer...', is_file($composer_file) ? 'Updating' : 'Installing'));
 
 		//fetch copy
@@ -1834,77 +1779,59 @@ function _install_composer(){
 			$tmp = basename($dest);
 			_echo("Copy: $source -> $tmp");
 			if (copy($source, $dest)) return true;
-			return _failure("Copy failed ($source -> $dest)");
+			throw new Exception("Copy failed ($source -> $dest)");
 		};
-		
-		//composer files
-		$cwd = _option('cwd');
-		$sig_file = $cwd . '/composer.sig';
-		$setup_file = $cwd . '/composer-setup.php';
-		$phar_file = $cwd . '/composer.phar';
 		
 		//get signature
 		_echo("\nGet setup signature...");
 		$_copy('https://composer.github.io/installer.sig', $sig_file);
 		$sig = trim(_read($sig_file));
-		_delete($sig_file);
+		_delete($sig_file); //delete read
 		_echo("Signature: $sig");
 	
-		//get setup
+		//get setup (verify hash signature)
 		_echo("\nGet composer setup (verify hash)...");
 		$_copy('https://getcomposer.org/installer', $setup_file);
 		if (hash_file('sha384', $setup_file) !== $sig){
-			_delete($setup_file);
-			return _failure('Corrupt installer - deleted');
+			_delete($setup_file); //delete corrupt
+			throw new Exception('Corrupt installer - deleted');
 		}
-		_echo('Installer verified');
+		_echo('Installer verified!');
 		
 		//install composer
 		_echo("\nInstall composer...");
-		_delete($phar_file);
-		_write(_option('log_file'), '');
-		$cmd = _command('php composer-setup.php', 2);
-		$data = _run($cmd, 1);
-		$res = _buffer_running(_worker_set([
-			'expires' => time() + 5,
-			'child_cmd' => $data['cmd'],
-			'child_pid' => $data['pid'],
-		]));
-		if ($res === false){
-			_kill_pid($data['pid']);
-			return _failure('Install composer interrupted.');
-		}
-		if (!(is_file($phar_file) && ($phar_file = realpath($phar_file)))) return _failure("Installed file not found. ($phar_file)");
-		_delete($setup_file);
+		_delete($phar_file); //delete existing
 
-		//finalizing (rename)
-		_worker_set([
-			'expires' => 0,
-			'child_cmd' => null,
-			'child_pid' => null,
-		]);
+		//install - foreground process
+		_putenv_composer_home();
+		$cmd = _command('php composer-setup.php', 0);
+		$proc = new Process($cmd);
+		if (!$proc -> open()) throw new Exception($proc -> error);
+		_echo(sprintf('[pid=%s, mypid=%s] %s', $proc -> pid, _option('mypid'), $cmd));
+		$proc -> close_pipe(0);
+		$proc -> output(1);
+		$proc -> close();
+		
+		//check installation
+		if (!(is_file($phar_file) && ($phar_file = realpath($phar_file)))) throw new Exception("Installed file not found. ($phar_file)");
+		_delete($setup_file); //delete setup successful
+		
+		//rename installed
 		$tmp = basename($composer_file);
 		_echo("Rename: $phar_file -> $tmp");
-		_delete($composer_file);
-		if (!rename($phar_file, $composer_file)) return _failure("Rename failed. ($phar_file -> $composer_file)");
-		_echo('Installation complete.');
-	});
-}
-
-//test lines
-function _test_lines(){
-	$max = 50;
-	$ms = 200;
-	_echo("Test $max lines (sleep $ms ms)...");
-	for ($i = 1; $i <= $max; $i ++){
-		_echo("[$i/$max] - test line.");
-		usleep($ms * 1000);
+		_delete($composer_file); //delete existing
+		if (!rename($phar_file, $composer_file)) throw new Exception("Rename failed. ($phar_file -> $composer_file)");
+		
+		//done
+		$_restore();
+		_echo('Installation complete.', 1, 0);
 	}
-	_echo('Test lines done.');
-}
-
-//test requirements
-function _test_requirements(){
+	catch (Exception $e){
+		$_restore();
+		return _failure($e -> getMessage());
+	}
+}//check requirements
+function _check_requirements(){
 	
 	//init vars
 	$errors = [];
@@ -1923,7 +1850,7 @@ function _test_requirements(){
 	};
 
 	//test
-	_echo("Testing Requirements... (is_console=$is_console)");
+	_echo('Checking requirements...');
 	_echo('');
 
 	//Test PHP Version >= 7.3
@@ -1954,9 +1881,18 @@ function _test_requirements(){
 	}
 
 	//result
-	$status = !$fails ? 'PASSED' : "FAILED ($fails)";
-	_echo('');
-	_echo("Test $status");
+	_echo("\nTest " . (!$fails ? 'PASSED' : "FAILED ($fails)"));
+	return !$fails;
+}//test lines
+function _test_lines(){
+	$max = 50;
+	$ms = 200;
+	_echo("Test $max lines (sleep $ms ms)...");
+	for ($i = 1; $i <= $max; $i ++){
+		_echo("[$i/$max] - test line.");
+		usleep($ms * 1000);
+	}
+	_echo('Test lines done.');
 }
 
 #================================  !_html    =================================
@@ -1972,15 +1908,28 @@ function _test_requirements(){
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title><?php echo _option('title'); ?></title>
 	<script type="text/javascript">
-		window.CONFIG = <?php echo json_encode(['resume' => _option('resume'), 'cwd' => _option('cwd'), 'target' => _option('target')]); ?>;
+		window.CONFIG = <?php echo json_encode([
+			'target' => _option('target'),
+			'cwd' => _option('cwd'),
+			'mypid' => _option('mypid'),
+			'resume' => _option('resume'),
+			'composer' => is_file(_option('composer_file')),
+		]); ?>;
 	</script>
 	<style>
 		.container {
+			flex-grow: 1;
+			display: flex;
+			flex-direction: column;
+			background: #fff;
+			border: 1px solid #ddd;
+			margin: 20px auto;
 			min-width: 70%;
 		}
 		@media only screen and (max-width: 768px){
 			.container {
-				min-width: 90%;
+				min-width: 100%;
+				margin: 0 auto;
 			}
 		}
 		.input {
@@ -2009,7 +1958,7 @@ function _test_requirements(){
 </head>
 <body style="position:fixed;top:0;left:0;width:100%;height:100%;margin:0;font-family:'monospace',consolas;background-color:#eee;">
 	<div style="position:relative;width:100%;height:100%;display:flex;flex-direction:column;">
-		<div class="container" style="flex-grow:1;display:flex;flex-direction:column;background:#fff;border:1px solid #ddd;margin:20px auto;">
+		<div class="container">
 			
 			<!-- head -->
 			<div style="padding:10px;text-align:center;">
@@ -2036,13 +1985,10 @@ function _test_requirements(){
 
 				<!-- buttons -->
 				<div style="padding:10px 10px 20px;gap:10px;display:flex;flex-direction:row;flex-wrap:wrap;border-top:1px solid #ddd;justify-content:start;">
-					<button id="btn_requirements" class="btn" type="button" title="Test Requirements">Test Requirements</button>
+					<button id="btn_requirements" class="btn" type="button" title="Check Requirements">Requirements</button>
 					<button id="btn_install_composer" class="btn" type="button" title="Install Composer">Install Composer</button>
 					<button id="btn_clear" class="btn" type="button" title="Clear Output">Clear</button>
 					<button id="btn_cancel" class="btn" type="button" title="Cancel Running">Cancel</button>
-					<div style="flex-grow:1;display:inline-flex;flex-direction:row;justify-content:end;">
-						<button id="btn_run" class="btn" type="submit" title="Run Command">Run</button>
-					</div>
 				</div>
 			</form>
 		</div>
@@ -2050,8 +1996,13 @@ function _test_requirements(){
 	<script type="text/javascript">
 		
 		//config
-		let IS_CANCELLED, IS_DISABLED, ENDPOINT = window.location.href, CONFIG = window.CONFIG || {};
-		console.table(CONFIG);
+		let IS_CANCELLED, RUN_TEST, IS_DISABLED, ENDPOINT = window.location.href, CONFIG = window.CONFIG || {};
+		Object.entries(CONFIG).forEach(entry => {
+			let [key, val] = entry;
+			if (!val) return;
+			if ('object' === typeof val) val = Object.values(val).join(' ');
+			console.log(`%c${key.toUpperCase()}`, 'color:blue', val);
+		});
 		
 		//output wrapper - scroll
 		const output_wrapper = document.getElementById('output_wrapper');
@@ -2072,15 +2023,23 @@ function _test_requirements(){
 		const output = document.getElementById('output');
 		const output_prompt = '>_';
 		const outputClear = text => output.innerText = output_prompt;
-		const outputText = text => {
-			output.innerText = output.innerText.replace(new RegExp(`\n?${output_prompt}\s*$`, 'g'), '') + String(text);
+		const outputText = (text, is_cmd) => {
+			let out = output.innerText.replace(new RegExp(`\n?${output_prompt}\s*$`, 'g'), '');
+			if (is_cmd) out = out.trim();
+			if (is_cmd && out.length) out += new RegExp('(\n|^)>[^\n]*$').test(out) ? '\n' : '\n\n';
+			output.innerText = out + String(text);
 			outputScrollBottom();
 		};
 		const outputPrompt = () => {
-			output.innerText = output.innerText.trim() + '\n\n' + output_prompt;
+			let out = output.innerText.trim();
+			if (out.length) out += new RegExp('(\n|^)>[^\n]*$').test(out) ? '\n' : '\n\n';
+			output.innerText = out + output_prompt;
 			outputScrollBottom();
 		};
-		const outputCmd = cmd => outputText((output.innerText.indexOf('\n') > -1 ? '\n' : '') + '> ' + cmd + '\n');
+		const outputCmd = cmd => {
+			//outputText((output.innerText.indexOf('\n') > -1 ? '\n' : '') + '> ' + cmd + '\n');
+			outputText('> ' + cmd + '\n', 1);
+		};
 
 		//controls
 		const cmd_form = document.getElementById('cmd_form');
@@ -2088,14 +2047,13 @@ function _test_requirements(){
 		const btn_requirements = document.getElementById('btn_requirements');
 		const btn_install_composer = document.getElementById('btn_install_composer');
 		const btn_clear = document.getElementById('btn_clear');
-		const btn_run = document.getElementById('btn_run');
 		const btn_cancel = document.getElementById('btn_cancel');
 
 		//disabled
 		const setDisabled = (disabled=true, cancel) => {
 			IS_DISABLED = disabled = !!disabled;
 			cancel = cancel === undefined ? !disabled : !!cancel;
-			[btn_requirements, btn_install_composer, btn_clear, btn_run].forEach(element => {
+			[btn_requirements, btn_install_composer, btn_clear].forEach(element => {
 				if (disabled) element.setAttribute('disabled', 'disabled');
 				else element.removeAttribute('disabled');
 			});
@@ -2202,6 +2160,7 @@ function _test_requirements(){
 			});
 		}
 		const fetchCancel = async () => {
+			if (RUN_TEST) RUN_TEST = undefined;
 			if (IS_CANCELLED) return console.warn('Fetch cancel is busy.');
 
 			//cancel busy
@@ -2217,12 +2176,7 @@ function _test_requirements(){
 
 			//cancel fetch
 			if (FETCH_EXEC){
-				
-				//aborting
-				outputText('Aborting...\n');
 				fetchAbort();
-				
-				//result - fetch request promise
 				return fetchExec('cancel', true)
 				.finally(() => {
 					if (FETCH_EXEC) return;
@@ -2236,16 +2190,16 @@ function _test_requirements(){
 
 		//run test
 		const runTest = () => {
+			RUN_TEST = 1;
 			setDisabled(true);
-			outputCmd('test');
+			outputCmd('run test (js)');
 			let x = 0, max = 100, interval = setInterval(() => {
 				x ++;
-				outputText(`[${x}/${max}] - test line.\n`);
-				if (x === max || IS_CANCELLED){
+				if (RUN_TEST) outputText(`[${x}/${max}] - test line.\n`);
+				if (x === max || !RUN_TEST){
 					clearInterval(interval);
 					if (IS_CANCELLED) return IS_CANCELLED();
 					setDisabled(false);
-					outputText(output_prompt);
 				}
 			}, 200);
 		};
@@ -2312,8 +2266,7 @@ function _test_requirements(){
 		input_cmd.placeholder = output_prompt;
 		input_cmd.focus();
 		setDisabled(false);
-
-		//resume
+		if (CONFIG.composer) btn_install_composer.style.display = 'none';
 		if (CONFIG.resume) ACTIONS.resume();
 	</script>
 </body>
