@@ -23,9 +23,9 @@ $options = [
 	'title' => 'P-TERM v' . $version,
 	'version' => $version,
 	'mypid' => getmypid(),
-	'stdout' => ($tmp = '__pterm.log'),
+	'stdout' => ($tmp = '__pterm.xx.log'),
 	'log_file' => $cwd . '/' . $tmp,
-	'cache_file' => $cwd . '/__pterm.cache',
+	'cache_file' => $cwd . '/__pterm.xx.cache',
 	'composer_file' => $cwd . '/composer',
 	'target' => $target,
 	'target_arg' => $target_arg,
@@ -61,6 +61,11 @@ $GLOBALS['__options__'] = $options;
 //handle command
 if ($cmd = _option('cmd')){
 	switch (strtolower($cmd)){
+		
+		//options
+		case 'options':
+			_echo(_option());
+			break;
 		
 		//exit
 		case 'exit':
